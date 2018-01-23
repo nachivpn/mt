@@ -10,7 +10,7 @@ infer (Term) ->
     IT = inferE([],Term),
     case IT of
         {fail,Reason} -> erlang:error("Error: " ++ Reason);
-        {succ,{S,T}} -> sub(T,S)
+        {succ,{S,T}} -> stlc:pretty(sub(T,S))
     end.
 
 %%%%%%%%%%%% Inference algorithm
@@ -19,7 +19,8 @@ infer (Term) ->
 inferE (Env, {ident, X}) ->
     T = env:lookup(X,Env),
     case T of
-        undefined -> m:fail("Unbound variable " ++ lists:flatten(io_lib:format("~p",[X,Env])));
+        undefined -> m:fail("Unbound variable " ++ 
+            lists:flatten(io_lib:format("~p",[X])));
         _ -> m:return({[],T})
     end;
 inferE (_, {int, _}) ->
