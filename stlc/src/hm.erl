@@ -53,7 +53,7 @@ mgu ({funt, A1, B1}, {funt, A2, B2}) ->
     Y = m:bind (X, fun(XSub) -> 
             mgu (sub(B1, XSub),sub(B2, XSub)) 
         end),
-    m:lift2(fun comp/2, X, Y);
+    m:lift2(fun comp/2, Y, X);
 mgu ({tvar, V},T) ->
     Occ = occurs(V,T),
     if
@@ -71,20 +71,26 @@ mgu (T,U) ->
 
 %%%%%%%%%%%% Utilities
 
+% Compose two substitutions
 % comp :: (Sub, Sub) -> Sub
 comp (X,Y) -> Y ++ X.
 
+% Repetitive substution
 % sub :: (Type, Sub) -> Type
-sub ({tvar, X}, Sub)  ->
-    MT = proplists:lookup(X, Sub),
-    case MT of
-        none -> {tvar, X};
-        {X,T} -> T
+sub (T, []) -> T;
+sub (T, [{V,VST}|Ss]) -> sub(subAll(T,V,VST), Ss).
+
+% Substitute all occurences of a variable in a type with it's subtitute type
+% subAll :: (Type, Var, Type) -> Type
+subAll ({tvar, X}, V, T)  ->
+    case X == V of
+        true    ->  T;
+        false   ->  {tvar, X}
     end;
-sub({bt, A},_)          ->
-    {bt, A};
-sub({funt, A, B},Sub)   ->
-    {funt, sub (A,Sub), sub(B,Sub)}.
+subAll ({bt, T}, _, _)  ->
+    {bt, T};
+subAll ({funt, A, B},V,T)   ->
+    {funt, subAll (A,V,T), subAll(B,V,T)}.
 
 % occurs :: (Var, Type) -> Type
 occurs (V,{funt, A, B}) ->
