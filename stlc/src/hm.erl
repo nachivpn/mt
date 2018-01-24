@@ -57,9 +57,9 @@ mgu ({funt, A1, B1}, {funt, A2, B2}) ->
 mgu ({tvar, V},T) ->
     Occ = occurs(V,T),
     if
-        V == T      -> m:return([]);
-        Occ         -> m:fail("failed occurs check");
-        true        -> m:return([{V,T}])
+        {tvar, V} == T  -> m:return([]);
+        Occ             -> m:fail("failed occurs check");
+        true            -> m:return([{V,T}])
     end;
 mgu (T,{tvar,V}) ->
     mgu ({tvar, V},T);
