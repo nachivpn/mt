@@ -99,3 +99,33 @@ occurs (_,{bt,_}) ->
     false;
 occurs (V,{tvar, X}) ->
     V == X.
+
+% All free type variables in the given type
+% free :: (Type) -> Set Var
+free ({bt, _})          -> sets:new();
+free ({funt, A, B})     -> sets:union(free (A),free (B));
+free ({tvar, A})        -> sets:add_element(A,sets:new());
+free ({forall, {tvar, X}, A}) 
+                        -> sets:del_element(X, free(A)).
+
+% free :: ([{Var,Type}]) -> Set Var
+freeInEnv (VTs) ->
+    lists:foldr(
+            fun sets:union/2,
+            sets:new(),
+            lists:map(fun({_,T}) -> free(T) end, VTs)).
+
+% converts a mono type to a poly type
+% generalize :: (Type,Env) -> Type
+generalize (Type,Env) ->
+    Mono = free (Type),
+    BoundInEnv = freeInEnv(Env),
+    % Generalizable variables of a type are
+    % monotype variables that are not bound in environment
+    Generalizable = sets:subtract(Mono, BoundInEnv),
+    bindGVs(sets:to_list(Generalizable),Type).
+
+% bind generalized variables
+% bindGVs :: ([Var], Type) -> Type
+bindGVs ([],T)      -> T;
+bindGVs ([X|Xs],T)  -> {forall, {tvar, X}, bindGVs(Xs,T)}.

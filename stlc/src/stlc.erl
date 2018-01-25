@@ -10,19 +10,20 @@ ident (Name)    -> {ident, Name}.
 int (N)         -> {int, N}.
 lam (X, Exp)    -> {lam, ident (X), Exp}.
 app (E1, E2)    -> {app, E1, E2}.
-% let (X, E1, E2) -> {lets, X, E1, E2}
+% lets (X, E1, E2) -> {lets, X, E1, E2}.
 
 %% Type constructors
 
 bt (A)      -> {bt, A}.
 funt (A,B)  -> {funt, A, B}.
 tvar (A)    -> {tvar, A}.
+forall (X,A)    -> {forall, tvar(X), A}.
 
 % pretty :: Type -> IO
 pretty(T) -> 
     prettify([],T),
     ok.
-
+    
 prettify(Env, {bt, A}) -> io:fwrite("~p", [A]), Env;
 prettify(Env, {funt, A, B}) ->
     io:fwrite("(", []),
@@ -50,6 +51,4 @@ idterm (X) -> lam (X, ident (X)).
 idapp(X) -> app(idterm(X),idterm(X)).
 sample() ->
     F = ident(f),
-    X = ident(x),
-    Y = ident(y),
-    lam (f, lam (x, app(F, X))).
+    app(lam (f, app(F, F)),idterm(x)).
