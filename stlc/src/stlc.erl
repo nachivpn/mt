@@ -10,7 +10,7 @@ ident (Name)    -> {ident, Name}.
 int (N)         -> {int, N}.
 lam (X, Exp)    -> {lam, ident (X), Exp}.
 app (E1, E2)    -> {app, E1, E2}.
-% lets (X, E1, E2) -> {lets, X, E1, E2}.
+lets (X, E1, E2) -> {lets, ident (X), E1, E2}.
 
 %% Type constructors
 
@@ -51,4 +51,4 @@ idterm (X) -> lam (X, ident (X)).
 idapp(X) -> app(idterm(X),idterm(X)).
 sample() ->
     F = ident(f),
-    app(lam (f, app(F, F)),idterm(x)).
+    lets(f,idterm(x),app(F,app(F,int(5)))).

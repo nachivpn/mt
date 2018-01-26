@@ -1,6 +1,7 @@
 -module(hm).
 -export([mgu/2,infer/1]).
 
+
 % Sub = [{Var,Type}]
 
 %%%%%%%%%%%%% Inference function (main)
@@ -21,7 +22,7 @@ inferE (Env, {ident, X}) ->
     case T of
         undefined -> m:fail("Unbound variable " ++ 
             lists:flatten(io_lib:format("~p",[X])));
-        _ -> m:return({[],T})
+        _ -> m:return({[],freshen(T)})
     end;
 inferE (_, {int, _}) ->
     m:return({[], stlc:bt(int)});
@@ -43,8 +44,18 @@ inferE (Env, {app, F, A}) ->
                 m:return({comp(S3,comp(S2,S1)), sub(V,S3)})
             end)
         end)
+    end);
+inferE (Env, {lets, {ident, X}, E1, E2}) ->
+    ST1 = inferE(Env, E1),
+    m:bind(ST1, fun({S1,T1}) ->
+        GenT1 = generalize(T1,Env),
+        Env_ = env:extend (X, GenT1, Env),
+        ST2 = inferE(Env_, E2),
+        m:bind(ST2, fun({S2,T2}) ->
+            m:return({comp(S2,S1), T2})
+        end)
     end).
-
+    
 %%%%%%%%%%%% Unification algorithm
 
 %  mgu :: (Type, Type) -> M Sub
@@ -90,7 +101,12 @@ subAll ({tvar, X}, V, T)  ->
 subAll ({bt, T}, _, _)  ->
     {bt, T};
 subAll ({funt, A, B},V,T)   ->
-    {funt, subAll (A,V,T), subAll(B,V,T)}.
+    {funt, subAll (A,V,T), subAll(B,V,T)};
+subAll ({forall, {tvar, X}, A}, V, T)   ->
+    case X == V of
+        true    ->  A;  % avoids name capture!
+        false   ->  {forall, {tvar, X}, subAll(A,V,T)}
+    end.
 
 % occurs :: (Var, Type) -> Type
 occurs (V,{funt, A, B}) ->
@@ -98,7 +114,12 @@ occurs (V,{funt, A, B}) ->
 occurs (_,{bt,_}) ->
     false;
 occurs (V,{tvar, X}) ->
-    V == X.
+    V == X;
+occurs (V,{forall, {tvar, X}, A}) ->
+    case X == V of
+        true -> false ;  
+        false -> occurs (V,A)
+    end.
 
 % All free type variables in the given type
 % free :: (Type) -> Set Var
@@ -129,3 +150,19 @@ generalize (Type,Env) ->
 % bindGVs :: ([Var], Type) -> Type
 bindGVs ([],T)      -> T;
 bindGVs ([X|Xs],T)  -> {forall, {tvar, X}, bindGVs(Xs,T)}.
+
+% bound :: (Type) -> [Var]
+bound ({forall, {tvar, X}, A}) -> [X | bound(A)];
+bound (_) -> [].
+
+% stripbound :: (Type) -> Type
+stripbound ({forall, {tvar, _}, A}) -> stripbound(A);
+stripbound (T) -> T.
+
+% replace all bound variables with fresh variables
+% freshen :: (Type) -> Type
+freshen (T) ->
+    lists:foldr(
+        fun(V, TAcc)->
+            subAll(TAcc, V, env:fresh())
+        end, stripbound(T), bound(T)).
