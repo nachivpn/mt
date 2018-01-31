@@ -8,76 +8,61 @@
 
 % infer :: Term -> Type
 infer (Term) ->
-    IT = inferE([],Term),
-    case IT of
-        {fail,Reason} -> erlang:error("Error: " ++ Reason);
-        {succ,{S,T}} -> stlc:pretty(sub(T,S))
+    try inferE([],Term) of
+        {S,T} -> stlc:pretty(sub(T,S))
+    catch
+        throw:Reason -> erlang:error("Type Error: " ++ Reason)
     end.
 
 %%%%%%%%%%%% Inference algorithm
     
-% inferE :: Term -> M {Sub, Type}
+% inferE :: Term -> {Sub, Type}
 inferE (Env, {ident, X}) ->
     T = env:lookup(X,Env),
     case T of
-        undefined -> m:fail("Unbound variable " ++ 
-            lists:flatten(io_lib:format("~p",[X])));
-        _ -> m:return({[],freshen(T)})
+        undefined -> throw("Unbound variable " ++ util:to_string(X));
+        _ -> {[],freshen(T)}
     end;
 inferE (_, {int, _}) ->
-    m:return({[], stlc:bt(int)});
+    {[], stlc:bt(int)};
 inferE (Env, {lam, {ident, X}, B}) ->
     A = env:fresh(),
     Env_ = env:extend (X,A,Env),
-    MST = inferE (Env_, B),
-    m:bind(MST, fun({S,T}) ->
-            m:return({S,stlc:funt(sub(A,S),T)})
-        end);
+    {S,T} = inferE (Env_, B),
+    {S,stlc:funt(sub(A,S),T)};
 inferE (Env, {app, F, A}) ->
-    X = inferE(Env, F),
-    Y = inferE(Env, A),
+    {S1,T1} = inferE(Env, F),
+    {S2,T2} = inferE(Env, A),
     V = env:fresh(),
-    m:bind(X, fun({S1,T1}) -> 
-        m:bind(Y, fun ({S2,T2}) ->
-            MS3 = mgu(sub(T1,S2),stlc:funt(T2,V)),
-            m:bind(MS3, fun (S3) ->
-                m:return({comp(S3,comp(S2,S1)), sub(V,S3)})
-            end)
-        end)
-    end);
+    S3 = mgu(sub(T1,S2),stlc:funt(T2,V)),
+    {comp(S3,comp(S2,S1)), sub(V,S3)};
 inferE (Env, {lets, {ident, X}, E1, E2}) ->
-    ST1 = inferE(Env, E1),
-    m:bind(ST1, fun({S1,T1}) ->
-        GenT1 = generalize(T1,Env),
-        Env_ = env:extend (X, GenT1, Env),
-        ST2 = inferE(Env_, E2),
-        m:bind(ST2, fun({S2,T2}) ->
-            m:return({comp(S2,S1), T2})
-        end)
-    end).
+    {S1,T1} = inferE(Env, E1),
+    GenT1 = generalize(T1,Env),
+    Env_ = env:extend (X, GenT1, Env),
+    {S2,T2} = inferE(Env_, E2),
+    {comp(S2,S1), T2}.
     
 %%%%%%%%%%%% Unification algorithm
 
-%  mgu :: (Type, Type) -> M Sub
+%  mgu :: (Type, Type) -> Sub
 mgu ({funt, A1, B1}, {funt, A2, B2}) -> 
     X = mgu (A1, A2),
-    Y = m:bind (X, fun(XSub) -> 
-            mgu (sub(B1, XSub),sub(B2, XSub)) 
-        end),
-    m:lift2(fun comp/2, Y, X);
+    Y = mgu (sub(B1, X),sub(B2, X)),
+    comp(Y, X);
 mgu ({tvar, V},T) ->
     Occ = occurs(V,T),
     if
-        {tvar, V} == T  -> m:return([]);
-        Occ             -> m:fail("failed occurs check");
-        true            -> m:return([{V,T}])
+        {tvar, V} == T  -> [];
+        Occ             -> throw("failed occurs check");
+        true            -> [{V,T}]
     end;
 mgu (T,{tvar,V}) ->
     mgu ({tvar, V},T);
 mgu (T,U) ->
     if
-        T == U      -> m:return([]);
-        true        -> m:fail("cannot unify")
+        T == U      -> [];
+        true        -> throw("Cannot unify " ++ util:to_string(T) ++ " & " ++ util:to_string(U))
     end.
 
 %%%%%%%%%%%% Utilities
@@ -93,6 +78,7 @@ sub (T, [{V,VST}|Ss]) -> sub(subAll(T,V,VST), Ss).
 
 % Substitute all occurences of a variable in a type with it's subtitute type
 % subAll :: (Type, Var, Type) -> Type
+
 subAll ({tvar, X}, V, T)  ->
     case X == V of
         true    ->  T;
@@ -129,7 +115,7 @@ free ({tvar, A})        -> sets:add_element(A,sets:new());
 free ({forall, {tvar, X}, A}) 
                         -> sets:del_element(X, free(A)).
 
-% free :: ([{Var,Type}]) -> Set Var
+% freeInEnv :: ([{Var,Type}]) -> Set Var
 freeInEnv (VTs) ->
     lists:foldr(
             fun sets:union/2,
