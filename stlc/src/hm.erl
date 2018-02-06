@@ -5,7 +5,7 @@
 -type type() :: tuple().
 -type tvar() :: any().
 -type env() :: [{tvar(),type()}].
--type sub() :: [{tvar(),type()}].
+-type sub() :: maps:map(). % Map <tvar(),type()>
 
 -type constraint() :: {type(), type()}.
 
@@ -26,7 +26,7 @@ infer (Term) ->
             S = stlc:prettify([],T),
             io:fwrite("~nGenerated constraints are:~n"),
             S_ = prettyCs(Cs,S),
-            Sub = solve(Cs,[]),
+            Sub = solve(Cs,emptySub()),
             io:fwrite("Inferred type: "),
             stlc:prettify(S_, subT(T,Sub)),
             io:fwrite("~n"),
@@ -84,49 +84,50 @@ unify ({funt, A1, B1}, {funt, A2, B2}) ->
 unify ({tvar, V},T) ->
     Occ = occurs(V,T),
     if
-        {tvar, V} == T  -> [];
+        {tvar, V} == T  -> emptySub();
         Occ             -> throw("failed occurs check");
-        true            -> [{V,T}]
+        true            -> maps:put(V,T,emptySub())
     end;
 unify (T,{tvar,V}) ->
     unify ({tvar, V},T);
 unify (T,U) ->
     if
-        T == U      -> [];
+        T == U      -> emptySub();
         true        -> throw("Cannot unify " ++ util:to_string(T) ++ " & " ++ util:to_string(U))
     end.
 
 %%%%%%%%%%%% Utilities
 
+-spec emptySub() -> sub().
+emptySub () -> maps:new().
+
 % Compose two substitutions
 -spec comp(sub(), sub()) -> sub().
-comp (X,Y) -> Y ++ X.
+comp (X,Y) ->
+    Y_ = maps:map( % apply subtitution X on every entry in Y
+            fun(_,Type) -> subT(Type,X) end, Y),
+    maps:merge(Y_,X).
 
-% Repetitive substution on a type
+% Apply a subtitution to a type
 -spec subT(type(), sub()) -> type().
-subT (T, []) -> T;
-subT (T, [{V,VST}|Ss]) -> subT(subAll(T,V,VST), Ss).
+subT ({tvar, X}, Sub)  ->
+    case maps:is_key(X,Sub) of
+        true    ->  maps:get(X,Sub);
+        false   ->  {tvar, X}
+    end;
+subT ({bt, T}, _)  ->
+    {bt, T};
+subT ({funt, A, B},Sub)   ->
+    {funt, subT (A,Sub), subT(B,Sub)};
+subT ({forall, {tvar, X}, A}, Sub)   ->
+    case maps:is_key(X,Sub) of
+        true    ->  {forall, {tvar, X}, A};  % avoids name capture!
+        false   ->  {forall, {tvar, X}, subT(A,Sub)}
+    end.
 
 % Repetitive substution on a constraint
 -spec subC(constraint(), sub()) -> constraint().
 subC ({T1,T2},S) -> {subT(T1,S),subT(T2,S)}.
-
-% Substitute all occurences of a variable in a type with it's subtitute type
--spec subAll(type(), tvar(), type()) -> type().
-subAll ({tvar, X}, V, T)  ->
-    case X == V of
-        true    ->  T;
-        false   ->  {tvar, X}
-    end;
-subAll ({bt, T}, _, _)  ->
-    {bt, T};
-subAll ({funt, A, B},V,T)   ->
-    {funt, subAll (A,V,T), subAll(B,V,T)};
-subAll ({forall, {tvar, X}, A}, V, T)   ->
-    case X == V of
-        true    ->  A;  % avoids name capture!
-        false   ->  {forall, {tvar, X}, subAll(A,V,T)}
-    end.
 
 -spec occurs(tvar(), type()) -> type().
 occurs (V,{funt, A, B}) ->
@@ -184,5 +185,5 @@ stripbound (T) -> T.
 freshen (T) ->
     lists:foldr(
         fun(V, TAcc)->
-            subAll(TAcc, V, env:fresh())
+            subT(TAcc, maps:put(V,env:fresh(),emptySub()))
         end, stripbound(T), bound(T)).
