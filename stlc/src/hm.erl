@@ -21,7 +21,7 @@ prettyCs([{T1,T2}|Cs],S) ->
 
 -spec infer(lterm()) -> type().
 infer (Term) ->
-    try inferE([],[],Term) of
+    try inferE([],Term) of
         {T,Cs} -> 
             S = stlc:prettify([],T),
             io:fwrite("~nGenerated constraints are:~n"),
@@ -37,30 +37,30 @@ infer (Term) ->
 
 %%%%%%%%%%%% Inference algorithm
 
--spec inferE(env(), [constraint()], lterm()) -> {type(), [constraint()]}.
-inferE (Env, Cs, {ident, X}) ->
+-spec inferE(env(), lterm()) -> {type(), [constraint()]}.
+inferE (Env, {ident, X}) ->
     T = env:lookup(X,Env),
     case T of
         undefined -> throw("Unbound variable " ++ util:to_string(X));
-        _ -> {freshen(T),Cs}
+        _ -> {freshen(T),[]}
     end;
-inferE (_, Cs, {int, _}) -> 
-    {stlc:bt(int), Cs};
-inferE (Env, Cs, {lam, {ident, X}, B}) ->
+inferE (_, {int, _}) -> 
+    {stlc:bt(int), []};
+inferE (Env, {lam, {ident, X}, B}) ->
     A = env:fresh(),
     Env_ = env:extend (X,A,Env),
-    {T,Cs_} = inferE (Env_, Cs, B),
+    {T,Cs_} = inferE (Env_, B),
     {stlc:funt(A,T), Cs_ };
-inferE (Env, Cs, {app, F, A}) ->
-    {T1,Cs1} = inferE(Env, Cs, F),
-    {T2,Cs2} = inferE(Env, Cs1, A),
+inferE (Env, {app, F, A}) ->
+    {T1,Cs1} = inferE(Env, F),
+    {T2,Cs2} = inferE(Env, A),
     V = env:fresh(),
-    {V, Cs2 ++ [{T1, stlc:funt(T2,V)}]};
-inferE (Env, Cs, {lets, {ident, X}, E1, E2}) ->
-    {T1, Cs1} = inferE(Env, Cs, E1),
+    {V, Cs1 ++ Cs2 ++ [{T1, stlc:funt(T2,V)}]};
+inferE (Env, {lets, {ident, X}, E1, E2}) ->
+    {T1, Cs1} = inferE(Env, E1),
     Env_ = env:extend (X, generalize(T1,Env), Env),
-    {T2, Cs2} = inferE(Env_, Cs1, E2),
-    {T2, Cs2}.
+    {T2, Cs2} = inferE(Env_, E2),
+    {T2, Cs1 ++ Cs2}.
 
 %%%%%%%%%%%% Constraint solver
 
@@ -106,7 +106,7 @@ emptySub () -> maps:new().
 comp (X,Y) ->
     Y_ = maps:map( % apply subtitution X on every entry in Y
             fun(_,Type) -> subT(Type,X) end, Y),
-    maps:merge(Y_,X).
+    maps:merge(X,Y_).   % union (Y_, entries in X whose keys are not in Y)
 
 % Apply a subtitution to a type
 -spec subT(type(), sub()) -> type().
@@ -121,7 +121,7 @@ subT ({funt, A, B},Sub)   ->
     {funt, subT (A,Sub), subT(B,Sub)};
 subT ({forall, {tvar, X}, A}, Sub)   ->
     case maps:is_key(X,Sub) of
-        true    ->  {forall, {tvar, X}, A};  % avoids name capture!
+        true    ->  {forall, {tvar, X}, subT(A,maps:remove(X,Sub))};  % avoids name capture!
         false   ->  {forall, {tvar, X}, subT(A,Sub)}
     end.
 
