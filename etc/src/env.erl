@@ -4,7 +4,7 @@
 empty() -> [].
 
 % fresh :: Type
-fresh() -> stlc:tvar(make_ref()).
+fresh() -> hm:tvar(make_ref()).
 
 % lookup :: (Var, [Var,Type])  -> Type
 lookup(X,Env) -> proplists:get_value(X, Env).

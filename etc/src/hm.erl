@@ -1,8 +1,8 @@
 -module(hm).
--export([infer/1,solve/2,prettyCs/2,prettify/2,emptySub/0,subT/2,freshen/1]).
--export_type([constraint/0,env/0]).
+-export([solve/2,prettyCs/2,prettify/2,emptySub/0,subT/2,freshen/1,generalize/2]).
+-export([bt/1,funt/2,tvar/1,forall/2]).
+-export_type([constraint/0,env/0,type/0]).
 
--type lterm() :: tuple().
 -type type() :: tuple().
 -type tvar() :: any().
 -type env() :: [{tvar(),type()}].
@@ -10,58 +10,12 @@
 
 -type constraint() :: {type(), type()}.
 
-%%%%%%%%%%%%% Inference function (main)
+%%%%%%%%%%%%% Type variable constructors
 
-prettyCs([], S) -> S;
-prettyCs([{T1,T2}|Cs],S) -> 
-    S_ = prettify(S,T1),
-    io:fwrite(" :==: "),
-    S__ = prettify(S_,T2),
-    io:fwrite("~n"),
-    prettyCs(Cs,S__).
-
--spec infer(lterm()) -> type().
-infer (Term) ->
-    try inferE([],Term) of
-        {T,Cs} -> 
-            S = prettify([],T),
-            io:fwrite("~nGenerated constraints are:~n"),
-            S_ = prettyCs(Cs,S),
-            Sub = solve(Cs,emptySub()),
-            io:fwrite("Inferred type: "),
-            prettify(S_, subT(T,Sub)),
-            io:fwrite("~n"),
-            ok
-    catch
-        throw:Reason -> erlang:error("Type Error: " ++ Reason)
-    end.
-
-%%%%%%%%%%%% Inference algorithm
-
--spec inferE(env(), lterm()) -> {type(), [constraint()]}.
-inferE (Env, {ident, X}) ->
-    T = env:lookup(X,Env),
-    case T of
-        undefined -> throw("Unbound variable " ++ util:to_string(X));
-        _ -> {freshen(T),[]}
-    end;
-inferE (_, {int, _}) -> 
-    {stlc:bt(int), []};
-inferE (Env, {lam, {ident, X}, B}) ->
-    A = env:fresh(),
-    Env_ = env:extend (X,A,Env),
-    {T,Cs_} = inferE (Env_, B),
-    {stlc:funt(A,T), Cs_ };
-inferE (Env, {app, F, A}) ->
-    {T1,Cs1} = inferE(Env, F),
-    {T2,Cs2} = inferE(Env, A),
-    V = env:fresh(),
-    {V, Cs1 ++ Cs2 ++ [{T1, stlc:funt(T2,V)}]};
-inferE (Env, {lets, {ident, X}, E1, E2}) ->
-    {T1, Cs1} = inferE(Env, E1),
-    Env_ = env:extend (X, generalize(T1,Env), Env),
-    {T2, Cs2} = inferE(Env_, E2),
-    {T2, Cs1 ++ Cs2}.
+bt (A)      -> {bt, A}.
+funt (A,B)  -> {funt, A, B}.
+tvar (A)    -> {tvar, A}.
+forall (X,A)    -> {forall, tvar(X), A}.
 
 %%%%%%%%%%%% Constraint solver
 
@@ -214,3 +168,11 @@ prettify(Env, {tvar, A}) ->
             io:fwrite("~c", [X]),
             Env
     end.
+
+prettyCs([], S) -> S;
+prettyCs([{T1,T2}|Cs],S) -> 
+    S_ = prettify(S,T1),
+    io:fwrite(" :==: "),
+    S__ = prettify(S_,T2),
+    io:fwrite("~n"),
+    prettyCs(Cs,S__).
