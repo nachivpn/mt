@@ -1,5 +1,6 @@
 -module(hm).
--export([infer/1]).
+-export([infer/1,solve/2,prettyCs/2,prettify/2]).
+-export_type([constraint/0]).
 
 -type lterm() :: tuple().
 -type type() :: tuple().
@@ -13,9 +14,9 @@
 
 prettyCs([], S) -> S;
 prettyCs([{T1,T2}|Cs],S) -> 
-    S_ = stlc:prettify(S,T1),
+    S_ = prettify(S,T1),
     io:fwrite(" :==: "),
-    S__ = stlc:prettify(S_,T2),
+    S__ = prettify(S_,T2),
     io:fwrite("~n"),
     prettyCs(Cs,S__).
 
@@ -23,12 +24,12 @@ prettyCs([{T1,T2}|Cs],S) ->
 infer (Term) ->
     try inferE([],Term) of
         {T,Cs} -> 
-            S = stlc:prettify([],T),
+            S = prettify([],T),
             io:fwrite("~nGenerated constraints are:~n"),
             S_ = prettyCs(Cs,S),
             Sub = solve(Cs,emptySub()),
             io:fwrite("Inferred type: "),
-            stlc:prettify(S_, subT(T,Sub)),
+            prettify(S_, subT(T,Sub)),
             io:fwrite("~n"),
             ok
     catch
@@ -187,3 +188,29 @@ freshen (T) ->
         fun(V, TAcc)->
             subT(TAcc, maps:put(V,env:fresh(),emptySub()))
         end, stripbound(T), bound(T)).
+
+% pretty :: Type -> IO
+pretty(T) -> 
+    prettify([],T),
+    ok.
+    
+% Stateful pretty printer
+prettify(Env, {bt, A}) -> io:fwrite("~p", [A]), Env;
+prettify(Env, {funt, A, B}) ->
+    io:fwrite("(", []),
+    Env_ = prettify(Env,A),
+    io:fwrite("->", []),
+    Env__ = prettify(Env_,B),
+    io:fwrite(")", []),
+    Env__;
+prettify(Env, {tvar, A}) ->
+    X = env:lookup(A, Env),
+    case X of
+        undefined -> 
+            L = length(Env) + 65,
+            io:fwrite("~c", [L]),
+            env:extend(A,L,Env);       
+        _         -> 
+            io:fwrite("~c", [X]),
+            Env
+    end.

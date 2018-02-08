@@ -19,31 +19,6 @@ funt (A,B)  -> {funt, A, B}.
 tvar (A)    -> {tvar, A}.
 forall (X,A)    -> {forall, tvar(X), A}.
 
-% pretty :: Type -> IO
-pretty(T) -> 
-    prettify([],T),
-    ok.
-    
-prettify(Env, {bt, A}) -> io:fwrite("~p", [A]), Env;
-prettify(Env, {funt, A, B}) ->
-    io:fwrite("(", []),
-    Env_ = prettify(Env,A),
-    io:fwrite("->", []),
-    Env__ = prettify(Env_,B),
-    io:fwrite(")", []),
-    Env__;
-prettify(Env, {tvar, A}) ->
-    X = env:lookup(A, Env),
-    case X of
-        undefined -> 
-            L = length(Env) + 65,
-            io:fwrite("~c", [L]),
-            env:extend(A,L,Env);       
-        _         -> 
-            io:fwrite("~c", [X]),
-            Env
-    end.
-
 % Example
 % idtype (A)  -> funt(A, A).
 
