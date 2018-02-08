@@ -33,7 +33,7 @@ infer (FunctionNode) ->
             S_ = hm:prettyCs(Cs,S),
             Sub = hm:solve(Cs,hm:emptySub()),
             io:fwrite("Inferred type: "),
-            stlc:prettify(S_, hm:subT(T,Sub)),
+            hm:prettify(S_, hm:subT(T,Sub)),
             io:fwrite("~n"),
             ok;
         Unknown   -> io:fwrite("~n WARNING: infer/2 result is not {Type,Constraints}, instead: ~p ~n",[Unknown])
@@ -63,7 +63,7 @@ infer (Env,Node) ->
             Body = clause_body(Node),
             BodyInferResult = lists:map(fun (CB) -> infer(Env_, CB) end, Body),
             {T,Cs} = lists:nth(1,BodyInferResult),
-            {lists:foldr (fun ({_,T},AccT) -> stlc:funt(T,AccT) end, T, EnvEntries) 
+            {lists:foldr (fun ({_,T},AccT) -> hm:funt(T,AccT) end, T, EnvEntries) 
             , Cs };
         variable ->
             {var, _, X} = Node,
@@ -71,5 +71,11 @@ infer (Env,Node) ->
                 undefined   -> throw("Unbound variable " ++ util:to_string(X));
                 T           -> {hm:freshen(T),[]}
             end;
+        application ->
+            {call,_,F,[X]} = Node,
+            {T1,Cs1} = infer(Env, F),
+            {T2,Cs2} = infer(Env, X),
+            V = env:fresh(),
+            {V, Cs1 ++ Cs2 ++ [{T1, hm:funt(T2,V)}]};
         _ -> io:fwrite("INTERNAL: NOT implemented: ~p~n",[Node])
     end.
