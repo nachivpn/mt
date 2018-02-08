@@ -1,5 +1,7 @@
 -module(env).
--export([fresh/0,lookup/2,extend/3,free/2]).
+-export([empty/0,fresh/0,lookup/2,extend/3,free/2]).
+
+empty() -> [].
 
 % fresh :: Type
 fresh() -> stlc:tvar(make_ref()).
