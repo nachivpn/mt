@@ -1,6 +1,6 @@
 -module(hm).
--export([infer/1,solve/2,prettyCs/2,prettify/2]).
--export_type([constraint/0]).
+-export([infer/1,solve/2,prettyCs/2,prettify/2,emptySub/0,subT/2,freshen/1]).
+-export_type([constraint/0,env/0]).
 
 -type lterm() :: tuple().
 -type type() :: tuple().
