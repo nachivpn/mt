@@ -44,6 +44,9 @@ infer (FunctionNode) ->
 -spec infer(hm:env(), erl_syntax:syntaxTree()) -> {hm:type(),[hm:constraint()]}.
 infer (Env,Node) -> 
     case type(Node) of
+        integer -> 
+            {integer,_,_} = Node,
+            {hm:bt(integer),[]};
         function ->
             Clauses = function_clauses(Node),
             ClausesInfRes = lists:map(fun(C) -> infer(Env,C) end, Clauses),
@@ -61,10 +64,14 @@ infer (Env,Node) ->
                 fun({X,T}, AccEnv) -> env:extend(X,T,AccEnv) end, Env, EnvEntries),
             % ClauseGaurds = clause_guard(Node),
             Body = clause_body(Node),
-            BodyInferResult = lists:map(fun (CB) -> infer(Env_, CB) end, Body),
-            {T,Cs} = lists:nth(1,BodyInferResult),
-            {lists:foldr (fun ({_,T},AccT) -> hm:funt(T,AccT) end, T, EnvEntries) 
-            , Cs };
+            {Env__, CsBody} =lists:foldl(
+                fun(Expr, {Ei,Csi}) -> 
+                    {Ei_,Csi_} = extendEnvExpr(Ei,Expr),
+                    {Ei_, Csi ++ Csi_}
+                end, {Env_,[]}, lists:droplast(Body)),
+            {ReturnType, CsLast} = infer(Env__, lists:last(Body)),
+            {lists:foldr (fun ({_,Typ},AccTyp) -> hm:funt(Typ,AccTyp) end, ReturnType, EnvEntries) 
+            , CsBody ++ CsLast };
         variable ->
             {var, _, X} = Node,
             case env:lookup(X,Env) of
@@ -78,4 +85,19 @@ infer (Env,Node) ->
             V = env:fresh(),
             {V, Cs1 ++ Cs2 ++ [{T1, hm:funt(T2,V)}]};
         _ -> io:fwrite("INTERNAL: NOT implemented: ~p~n",[Node])
+    end.
+
+-spec extendEnvExpr(hm:env(), erl_syntax:syntaxTree()) -> {hm:env(),[hm:constraint()]}.
+extendEnvExpr(Env,{match,LN,LNode,RNode}) ->
+    LNodeType = type(LNode),
+    if
+        LNodeType == variable   -> 
+            {var, _, X} = LNode,
+            {RType, RCons} = infer(Env,RNode),
+            Env_ = env:extend(X,RType,Env),
+            {Env_, RCons};
+        true   -> 
+            {LType, LCons} = infer(Env,LNode),
+            {RType, RCons} = infer(Env,RNode),
+            {Env, LCons ++ RCons ++[{LType,RType}]}
     end.
