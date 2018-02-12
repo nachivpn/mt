@@ -28,12 +28,12 @@ parse_transform(Forms,O) ->
 infer (FunctionNode) ->
     try infer(env:empty(),FunctionNode) of
         {T,Cs} ->
-            S = hm:prettify([],T),
-            io:fwrite("~nGenerated constraints are:~n"),
-            S_ = hm:prettyCs(Cs,S),
+            % S = hm:prettify([],T),
+            % io:fwrite("~nGenerated constraints are:~n"),
+            % S_ = hm:prettyCs(Cs,S),
             Sub = hm:solve(Cs,hm:emptySub()),
             io:fwrite("Inferred type: "),
-            hm:prettify(S_, hm:subT(T,Sub)),
+            hm:pretty(hm:subT(T,Sub)),
             io:fwrite("~n"),
             ok;
         Unknown   -> io:fwrite("~n WARNING: infer/2 result is not {Type,Constraints}, instead: ~p ~n",[Unknown])
@@ -81,11 +81,16 @@ infer (Env,Node) ->
                 T           -> {hm:freshen(T),[]}
             end;
         application ->
-            {call,_,F,[X]} = Node,
-            {T1,Cs1} = infer(Env, F),
-            {T2,Cs2} = infer(Env, X),
+            {call,_,F,Args} = Node,
+            {T1,Cs1} = infer(Env, F),            
+            {T2,Cs2} = lists:foldl(
+                fun(X, {AccT,AccCs}) -> 
+                    {T,Cs} = infer(Env,X),
+                    {AccT ++ [T], AccCs ++ Cs}
+                end
+            , {[],[]}, Args),
             V = env:fresh(),
-            {V, Cs1 ++ Cs2 ++ [{T1, hm:funt([T2],V)}]};
+            {V, Cs1 ++ Cs2 ++ [{T1, hm:funt(T2,V)}]};
         _ -> io:fwrite("INTERNAL: NOT implemented: ~p~n",[Node])
     end.
 
@@ -99,5 +104,5 @@ checkExpr(Env,{var,_,X}) ->
     case env:is_bound(X,Env) of
         true    -> {Env,[]};
         false   -> {env:extend(X,env:fresh(),Env), []}
-    end.
-
+    end;
+checkExpr(Env,{integer,_,_}) -> {Env,[]}.
