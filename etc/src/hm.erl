@@ -177,9 +177,9 @@ prettify(Env, {funt, As, B}) ->
         fun(A,E) -> prettify(E,A) end
         , fun() -> io:fwrite(",") end
         , Env, As),
+    io:fwrite(")", []),
     io:fwrite("->", []),
     Env__ = prettify(Env_,B),
-    io:fwrite(")", []),
     Env__;
 prettify(Env, {tvar, A}) ->
     X = env:lookup(A, Env),
