@@ -1,9 +1,9 @@
 -module(hm).
 -export([solve/2,prettyCs/2,prettify/2,emptySub/0,subT/2,freshen/1,generalize/2]).
--export([bt/1,funt/2,tvar/1,forall/2]).
+-export([bt/1,funt/2,tvar/1,forall/2,pretty/1]).
 -export_type([constraint/0,env/0,type/0]).
 
--type type() :: tuple().
+
 -type tvar() :: any().
 -type env() :: [{tvar(),type()}].
 -type sub() :: maps:map(). % Map <tvar(),type()>
@@ -11,6 +11,12 @@
 -type constraint() :: {type(), type()}.
 
 %%%%%%%%%%%%% Type variable constructors
+
+-type type() :: 
+    {bt,type()}
+    | {funt, [type()], type()} 
+    | {tvar, type()}
+    | {forall, type(), type()}.
 
 bt (A)      -> {bt, A}.
 funt (A,B)  -> {funt, A, B}.
@@ -31,9 +37,19 @@ solve ([{T1,T2}|Cs],Sub) ->
 
 %%%%%%%%%%%% Unification algorithm
 
+-spec unifyMany([type()],[type()]) -> sub().
+unifyMany([],[])            -> emptySub();
+unifyMany([],_)             -> throw("number of arguments do not match");
+unifyMany(_,[])             -> throw("number of arguments do not match");
+unifyMany ([A|As],[B|Bs])   ->
+    Sub = unify(A,B),
+    As_ = lists:map(fun(T) -> subT(T,Sub) end, As),
+    Bs_ = lists:map(fun(T) -> subT(T,Sub) end, Bs),
+    comp(unifyMany(As_,Bs_),Sub).
+
 -spec unify(type(), type()) -> sub().
-unify ({funt, A1, B1}, {funt, A2, B2}) -> 
-    X = unify (A1, A2),
+unify ({funt, As1, B1}, {funt, As2, B2}) -> 
+    X = unifyMany (As1, As2),
     Y = unify (subT(B1, X),subT(B2, X)),
     comp(Y,X);
 unify ({tvar, V},T) ->
@@ -72,8 +88,8 @@ subT ({tvar, X}, Sub)  ->
     end;
 subT ({bt, T}, _)  ->
     {bt, T};
-subT ({funt, A, B},Sub)   ->
-    {funt, subT (A,Sub), subT(B,Sub)};
+subT ({funt, As, B},Sub)   ->
+    {funt, lists:map(fun(A) -> subT (A,Sub) end, As), subT(B,Sub)};
 subT ({forall, {tvar, X}, A}, Sub)   ->
     case maps:is_key(X,Sub) of
         true    ->  {forall, {tvar, X}, subT(A,maps:remove(X,Sub))};  % avoids name capture!
@@ -84,9 +100,9 @@ subT ({forall, {tvar, X}, A}, Sub)   ->
 -spec subC(constraint(), sub()) -> constraint().
 subC ({T1,T2},S) -> {subT(T1,S),subT(T2,S)}.
 
--spec occurs(tvar(), type()) -> type().
-occurs (V,{funt, A, B}) ->
-    occurs(V,A) or occurs(V,B);
+-spec occurs(tvar(), type()) -> boolean().
+occurs (V,{funt, As, B}) ->
+    lists:any(fun(A) -> occurs(V,A) end, As) or occurs(V,B);
 occurs (_,{bt,_}) ->
     false;
 occurs (V,{tvar, X}) ->
@@ -100,7 +116,12 @@ occurs (V,{forall, {tvar, X}, A}) ->
 % All free type variables in the given type
 -spec free(type()) -> set:set(tvar()).
 free ({bt, _})          -> sets:new();
-free ({funt, A, B})     -> sets:union(free (A),free (B));
+free ({funt, As, B})     -> 
+    sets:union(
+        lists:foldr(
+            fun(A, AccSet) -> sets:union(free(A),AccSet) end
+            , sets:new(), As)
+        , free (B));
 free ({tvar, A})        -> sets:add_element(A,sets:new());
 free ({forall, {tvar, X}, A}) 
                         -> sets:del_element(X, free(A)).
@@ -147,12 +168,15 @@ freshen (T) ->
 pretty(T) -> 
     prettify([],T),
     ok.
-    
+
 % Stateful pretty printer
 prettify(Env, {bt, A}) -> io:fwrite("~p", [A]), Env;
-prettify(Env, {funt, A, B}) ->
+prettify(Env, {funt, As, B}) ->
     io:fwrite("(", []),
-    Env_ = prettify(Env,A),
+    Env_ = util:interFoldEffect(
+        fun(A,E) -> prettify(E,A) end
+        , fun() -> io:fwrite(",") end
+        , Env, As),
     io:fwrite("->", []),
     Env__ = prettify(Env_,B),
     io:fwrite(")", []),

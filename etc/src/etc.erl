@@ -70,7 +70,9 @@ infer (Env,Node) ->
                     {Ei_, Csi ++ Csi_}
                 end, {Env_,[]}, lists:droplast(Body)),
             {ReturnType, CsLast} = infer(Env__, lists:last(Body)),
-            {lists:foldr (fun ({_,Typ},AccTyp) -> hm:funt(Typ,AccTyp) end, ReturnType, EnvEntries) 
+            {hm:funt(
+                lists:map (fun ({_,Typ}) -> Typ end, EnvEntries)
+                , ReturnType)
             , CsBody ++ CsLast };
         variable ->
             {var, _, X} = Node,
@@ -83,7 +85,7 @@ infer (Env,Node) ->
             {T1,Cs1} = infer(Env, F),
             {T2,Cs2} = infer(Env, X),
             V = env:fresh(),
-            {V, Cs1 ++ Cs2 ++ [{T1, hm:funt(T2,V)}]};
+            {V, Cs1 ++ Cs2 ++ [{T1, hm:funt([T2],V)}]};
         _ -> io:fwrite("INTERNAL: NOT implemented: ~p~n",[Node])
     end.
 

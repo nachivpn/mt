@@ -52,12 +52,12 @@ inferE (Env, {lam, {ident, X}, B}) ->
     A = env:fresh(),
     Env_ = env:extend (X,A,Env),
     {T,Cs_} = inferE (Env_, B),
-    {hm:funt(A,T), Cs_ };
+    {hm:funt([A],T), Cs_ };
 inferE (Env, {app, F, A}) ->
     {T1,Cs1} = inferE(Env, F),
     {T2,Cs2} = inferE(Env, A),
     V = env:fresh(),
-    {V, Cs1 ++ Cs2 ++ [{T1, hm:funt(T2,V)}]};
+    {V, Cs1 ++ Cs2 ++ [{T1, hm:funt([T2],V)}]};
 inferE (Env, {lets, {ident, X}, E1, E2}) ->
     {T1, Cs1} = inferE(Env, E1),
     Env_ = env:extend (X, hm:generalize(T1,Env), Env),
