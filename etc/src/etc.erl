@@ -66,7 +66,7 @@ infer (Env,Node) ->
             Body = clause_body(Node),
             {Env__, CsBody} =lists:foldl(
                 fun(Expr, {Ei,Csi}) -> 
-                    {Ei_,Csi_} = extendEnvExpr(Ei,Expr),
+                    {Ei_,Csi_} = checkExpr(Ei,Expr),
                     {Ei_, Csi ++ Csi_}
                 end, {Env_,[]}, lists:droplast(Body)),
             {ReturnType, CsLast} = infer(Env__, lists:last(Body)),
@@ -89,17 +89,15 @@ infer (Env,Node) ->
         _ -> io:fwrite("INTERNAL: NOT implemented: ~p~n",[Node])
     end.
 
--spec extendEnvExpr(hm:env(), erl_syntax:syntaxTree()) -> {hm:env(),[hm:constraint()]}.
-extendEnvExpr(Env,{match,LN,LNode,RNode}) ->
-    LNodeType = type(LNode),
-    if
-        LNodeType == variable   -> 
-            {var, _, X} = LNode,
-            {RType, RCons} = infer(Env,RNode),
-            Env_ = env:extend(X,RType,Env),
-            {Env_, RCons};
-        true   -> 
-            {LType, LCons} = infer(Env,LNode),
-            {RType, RCons} = infer(Env,RNode),
-            {Env, LCons ++ RCons ++[{LType,RType}]}
+-spec checkExpr(hm:env(), erl_syntax:syntaxTree()) -> {hm:env(),[hm:constraint()]}.
+checkExpr(Env,{match,_,LNode,RNode}) ->
+    {Env_,Cons1} = checkExpr(Env,LNode),
+    {LType, Cons2} = infer(Env_,LNode),
+    {RType, Cons3} = infer(Env,RNode),
+    {Env_, Cons1 ++ Cons2 ++ Cons3 ++ [{LType,RType}]};
+checkExpr(Env,{var,_,X}) ->
+    case env:is_bound(X,Env) of
+        true    -> {Env,[]};
+        false   -> {env:extend(X,env:fresh(),Env), []}
     end.
+
