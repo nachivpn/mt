@@ -49,8 +49,16 @@ infer (Env,Node) ->
             {hm:bt(integer),[]};
         function ->
             Clauses = function_clauses(Node),
+            % list of clause inference results
             ClausesInfRes = lists:map(fun(C) -> infer(Env,C) end, Clauses),
-            lists:nth(1,ClausesInfRes);   %supports only one clause!
+            % "flatten" clause inference results
+            {InfTypes, InfCs} = lists:foldr(
+                fun({T,Cs},{AccTypes,AccCs}) -> {[T|AccTypes], Cs ++ AccCs} end
+                , {[],[]}, ClausesInfRes),
+            % Unify the types of all clauses 
+            UniCs = unifyTypes(InfTypes),
+            % pick the type of any one clause as the type of fn
+            {lists:last(InfTypes), InfCs ++ UniCs};
         clause ->
             ClausePatterns = clause_patterns(Node),
             % Type assumption for every argument
@@ -106,3 +114,17 @@ checkExpr(Env,{var,_,X}) ->
         false   -> {env:extend(X,env:fresh(),Env), []}
     end;
 checkExpr(Env,{integer,_,_}) -> {Env,[]}.
+
+-spec unifyTypes([hm:type()]) -> [hm:constraint()].
+unifyTypes(Types) ->
+    {Constraints, RemType} = util:pairwiseChunk(Types),
+    RemConstraints = 
+        case RemType of
+            {nothing} -> [];
+            {just, X} -> 
+                case length(Constraints) of
+                    L when L > 0    -> [{X, element(2,lists:last(Constraints))}];
+                    _               -> []
+                end
+        end,
+    Constraints ++ RemConstraints.

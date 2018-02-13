@@ -1,5 +1,5 @@
 -module (util).
--export([to_string/1,intersperse/2,interFoldEffect/4]).
+-export([to_string/1,intersperse/2,interFoldEffect/4,pairwiseChunk/1]).
 
 to_string(X) -> lists:flatten(io_lib:format("~p",[X])).
 
@@ -14,3 +14,9 @@ interFoldEffect(F,I,B,[X|Xs])     ->
     B_ = F(X,B), 
     I(), 
     interFoldEffect(F,I,B_,Xs).
+
+pairwiseChunk ([])              -> {[],{nothing}};
+pairwiseChunk ([X])             -> {[],{just,X}};
+pairwiseChunk ([X|[Y|Tail]])    -> 
+    {TailChunks, Rem} = pairwiseChunk(Tail),
+    {[{X,Y} | TailChunks], Rem}.
