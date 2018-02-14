@@ -34,7 +34,7 @@ infer (Term) ->
             io:fwrite("~n"),
             ok
     catch
-        throw:Reason -> erlang:error("Type Error: " ++ Reason)
+        error:{type_error,Reason} -> erlang:error("Type Error: " ++ Reason)
     end.
 
 %%%%%%%%%%%% Inference algorithm
@@ -43,7 +43,7 @@ infer (Term) ->
 inferE (Env, {ident, X}) ->
     T = env:lookup(X,Env),
     case T of
-        undefined -> throw("Unbound variable " ++ util:to_string(X));
+        undefined -> erlang:error({type_error,"Unbound variable " ++ util:to_string(X)});
         _ -> {hm:freshen(T),[]}
     end;
 inferE (_, {int, _}) -> 
