@@ -38,7 +38,7 @@ infer (FunctionNode) ->
             ok;
         Unknown   -> io:fwrite("~n WARNING: infer/2 result is not {Type,Constraints}, instead: ~p ~n",[Unknown])
     catch
-        throw:Reason -> erlang:error("Type Error: " ++ Reason)
+        error:{type_error,Reason} -> erlang:error("Type Error: " ++ Reason)
     end.
 
 -spec infer(hm:env(), erl_syntax:syntaxTree()) -> {hm:type(),[hm:constraint()]}.
@@ -85,7 +85,7 @@ infer (Env,Node) ->
         variable ->
             {var, _, X} = Node,
             case env:lookup(X,Env) of
-                undefined   -> throw("Unbound variable " ++ util:to_string(X));
+                undefined   -> erlang:error({type_error,"Unbound variable " ++ util:to_string(X)});
                 T           -> {hm:freshen(T),[]}
             end;
         application ->

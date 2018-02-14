@@ -39,8 +39,8 @@ solve ([{T1,T2}|Cs],Sub) ->
 
 -spec unifyMany([type()],[type()]) -> sub().
 unifyMany([],[])            -> emptySub();
-unifyMany([],_)             -> throw("number of arguments do not match");
-unifyMany(_,[])             -> throw("number of arguments do not match");
+unifyMany([],_)             -> erlang:error({type_error, "Number of arguments do not match"});
+unifyMany(_,[])             -> erlang:error({type_error, "Number of arguments do not match"});
 unifyMany ([A|As],[B|Bs])   ->
     Sub = unify(A,B),
     As_ = lists:map(fun(T) -> subT(T,Sub) end, As),
@@ -56,7 +56,7 @@ unify ({tvar, V},T) ->
     Occ = occurs(V,T),
     if
         {tvar, V} == T  -> emptySub();
-        Occ             -> throw("failed occurs check");
+        Occ             -> erlang:error({type_error, "Failed occurs check"});
         true            -> maps:put(V,T,emptySub())
     end;
 unify (T,{tvar,V}) ->
@@ -64,7 +64,7 @@ unify (T,{tvar,V}) ->
 unify (T,U) ->
     if
         T == U      -> emptySub();
-        true        -> throw("Cannot unify " ++ util:to_string(T) ++ " & " ++ util:to_string(U))
+        true        -> erlang:error({type_error, "Cannot unify " ++ util:to_string(T) ++ " & " ++ util:to_string(U)})
     end.
 
 %%%%%%%%%%%% Utilities
