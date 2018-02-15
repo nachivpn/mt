@@ -47,6 +47,12 @@ infer (Env,Node) ->
         integer -> 
             {integer,_,_} = Node,
             {hm:bt(integer),[]};
+        string ->
+            {string,_,_} = Node,
+            {hm:bt(string),[]};
+        float ->
+            {float,_,_} = Node,
+            {hm:bt(float),[]};
         function ->
             Clauses = function_clauses(Node),
             % list of clause inference results
@@ -56,7 +62,7 @@ infer (Env,Node) ->
                 fun({T,Cs},{AccTypes,AccCs}) -> {[T|AccTypes], Cs ++ AccCs} end
                 , {[],[]}, ClausesInfRes),
             % Unify the types of all clauses 
-            UniCs = unifyTypes(InfTypes),
+            UniCs = unify(InfTypes),
             % pick the type of any one clause as the type of fn
             {lists:last(InfTypes), InfCs ++ UniCs};
         clause ->
@@ -96,9 +102,9 @@ infer (Env,Node) ->
                     {T,Cs} = infer(Env,X),
                     {AccT ++ [T], AccCs ++ Cs}
                 end
-            , {[],[]}, Args),
+                , {[],[]}, Args),
             V = env:fresh(),
-            {V, Cs1 ++ Cs2 ++ [{T1, hm:funt(T2,V)}]};
+            {V, Cs1 ++ Cs2 ++ unify(T1, hm:funt(T2,V))};
         _ -> io:fwrite("INTERNAL: NOT implemented: ~p~n",[Node])
     end.
 
@@ -113,10 +119,16 @@ checkExpr(Env,{var,_,X}) ->
         true    -> {Env,[]};
         false   -> {env:extend(X,env:fresh(),Env), []}
     end;
-checkExpr(Env,{integer,_,_}) -> {Env,[]}.
+checkExpr(Env,ExprNode) -> 
+    {_,Constraints} = infer(Env, ExprNode),
+    {Env,Constraints}.
 
--spec unifyTypes([hm:type()]) -> [hm:constraint()].
-unifyTypes(Types) ->
+
+%%%%%%%%%%%%%%%%%% Utilities
+
+% "pseudo unify" which returns constraints
+-spec unify([hm:type()]) -> [hm:constraint()].
+unify(Types) ->
     {Constraints, RemType} = util:pairwiseChunk(Types),
     RemConstraints = 
         case RemType of
@@ -128,3 +140,7 @@ unifyTypes(Types) ->
                 end
         end,
     Constraints ++ RemConstraints.
+
+% "pseudo unify" which returns constraints
+-spec unify(hm:type(),hm:type()) -> [hm:constraint()].
+unify(Type1,Type2) -> [{Type1,Type2}].
