@@ -26,7 +26,7 @@ parse_transform(Forms,O) ->
 
 -spec infer(erl_syntax:syntaxTree()) -> hm:type().
 infer (FunctionNode) ->
-    try infer(env:empty(),FunctionNode) of
+    try infer(rt:defaultEnv(),FunctionNode) of
         {T,Cs} ->
             % S = hm:prettify([],T),
             % io:fwrite("~nGenerated constraints are:~n"),
@@ -105,6 +105,16 @@ infer (Env,Node) ->
                 , {[],[]}, Args),
             V = env:fresh(),
             {V, Cs1 ++ Cs2 ++ unify(T1, hm:funt(T2,V))};
+        infix_expr ->
+            {op,_,Op,E1,E2} = Node,
+            case env:lookup(Op,Env) of
+                undefined   -> erlang:error({type_error,"Unbound operator " ++ util:to_string(Op)});
+                T           ->
+                    {T1, Cs1} = infer(Env, E1),
+                    {T2, Cs2} = infer(Env, E1),
+                    V = env:fresh(),
+                    {V, Cs1 ++ Cs2 ++ unify(T, hm:funt([T1,T2],V))}
+            end;
         _ -> io:fwrite("INTERNAL: NOT implemented: ~p~n",[Node])
     end.
 
