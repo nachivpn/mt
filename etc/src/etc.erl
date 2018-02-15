@@ -21,25 +21,32 @@
 parse_transform(Forms,O) ->
     Functions = lists:filter(
         fun (Node) -> element(1, Node) == function end, Forms),
-    lists:map(fun infer/1,Functions),
-    Forms.
-
--spec infer(erl_syntax:syntaxTree()) -> hm:type().
-infer (FunctionNode) ->
-    try infer(rt:defaultEnv(),FunctionNode) of
-        {T,Cs} ->
-            % S = hm:prettify([],T),
-            % io:fwrite("~nGenerated constraints are:~n"),
-            % S_ = hm:prettyCs(Cs,S),
-            Sub = hm:solve(Cs,hm:emptySub()),
-            io:fwrite("Inferred type: "),
-            hm:pretty(hm:subT(T,Sub)),
-            io:fwrite("~n"),
-            ok;
-        Unknown   -> io:fwrite("~n WARNING: infer/2 result is not {Type,Constraints}, instead: ~p ~n",[Unknown])
+    Env = lists:foldl(fun(F, AccEnv) -> 
+            FunName = element(4, erl_syntax:function_name(F)),
+            env:extend(FunName, env:fresh(), AccEnv)
+        end
+        , rt:defaultEnv(), Functions),
+    try
+        Cs = lists:foldl(
+            fun(F,AccCs) ->
+                FunName = element(4, erl_syntax:function_name(F)),
+                {T, Cs} = infer(Env, F),
+                unify(T, lookup(FunName, Env)) ++ Cs ++ AccCs 
+            end
+        , [], Functions),
+        hm:solve(Cs,hm:emptySub())
+    of  
+        Sub -> 
+            lists:map(fun({X,T}) -> 
+                io:fwrite("~p :: ",[X]), 
+                hm:pretty(hm:subT(T,Sub)), 
+                io:fwrite("~n",[])
+            end, lists:reverse(Env))
     catch
         error:{type_error,Reason} -> erlang:error("Type Error: " ++ Reason)
-    end.
+    end,
+    Forms.
+    
 
 -spec infer(hm:env(), erl_syntax:syntaxTree()) -> {hm:type(),[hm:constraint()]}.
 infer (Env,Node) -> 
@@ -90,10 +97,7 @@ infer (Env,Node) ->
             , CsBody ++ CsLast };
         variable ->
             {var, _, X} = Node,
-            case env:lookup(X,Env) of
-                undefined   -> erlang:error({type_error,"Unbound variable " ++ util:to_string(X)});
-                T           -> {hm:freshen(T),[]}
-            end;
+            {lookup(X, Env), []};
         application ->
             {call,_,F,Args} = Node,
             {T1,Cs1} = infer(Env, F),            
@@ -107,14 +111,14 @@ infer (Env,Node) ->
             {V, Cs1 ++ Cs2 ++ unify(T1, hm:funt(T2,V))};
         infix_expr ->
             {op,_,Op,E1,E2} = Node,
-            case env:lookup(Op,Env) of
-                undefined   -> erlang:error({type_error,"Unbound operator " ++ util:to_string(Op)});
-                T           ->
-                    {T1, Cs1} = infer(Env, E1),
-                    {T2, Cs2} = infer(Env, E1),
-                    V = env:fresh(),
-                    {V, Cs1 ++ Cs2 ++ unify(T, hm:funt([T1,T2],V))}
-            end;
+            T = lookup(Op, Env),
+            {T1, Cs1} = infer(Env, E1),
+            {T2, Cs2} = infer(Env, E2),
+            V = env:fresh(),
+            {V, Cs1 ++ Cs2 ++ unify(T, hm:funt([T1,T2],V))};
+        atom ->
+            {atom,_,X} = Node,
+            {lookup(X,Env),[]};
         _ -> io:fwrite("INTERNAL: NOT implemented: ~p~n",[Node])
     end.
 
@@ -154,3 +158,10 @@ unify(Types) ->
 % "pseudo unify" which returns constraints
 -spec unify(hm:type(),hm:type()) -> [hm:constraint()].
 unify(Type1,Type2) -> [{Type1,Type2}].
+
+-spec lookup(hm:tvar(),hm:env()) -> hm:type().
+lookup(X,Env) ->
+    case env:lookup(X,Env) of
+        undefined   -> erlang:error({type_error,util:to_string(X) ++ " not bound!"});
+        T           -> hm:freshen(T)
+    end.
