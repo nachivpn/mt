@@ -1,6 +1,6 @@
 -module(hm).
--export([solve/2,prettyCs/2,prettify/2,emptySub/0,subT/2,freshen/1,generalize/2]).
--export([bt/1,funt/2,tvar/1,forall/2,pretty/1]).
+-export([solve/1,prettyCs/2,prettify/2,emptySub/0,subT/2,freshen/1,generalize/2]).
+-export([bt/1,funt/2,tvar/1,forall/2,pretty/1,subE/2]).
 -export_type([constraint/0,env/0,type/0]).
 
 
@@ -24,6 +24,9 @@ tvar (A)    -> {tvar, A}.
 forall (X,A)    -> {forall, tvar(X), A}.
 
 %%%%%%%%%%%% Constraint solver
+
+-spec solve([constraint()]) -> sub().
+solve(Cs) -> solve(Cs, emptySub()).
 
 -spec solve([constraint()], sub()) -> sub().
 solve ([],Sub) -> Sub;
@@ -99,6 +102,10 @@ subT ({forall, {tvar, X}, A}, Sub)   ->
 % Repetitive substution on a constraint
 -spec subC(constraint(), sub()) -> constraint().
 subC ({T1,T2},S) -> {subT(T1,S),subT(T2,S)}.
+
+% Repetitive substution on a environment
+-spec subE(env(), sub()) -> env().
+subE (Env,S) -> env:mapV(fun(T) -> subT(T,S) end, Env).
 
 -spec occurs(tvar(), type()) -> boolean().
 occurs (V,{funt, As, B}) ->

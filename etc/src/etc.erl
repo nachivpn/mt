@@ -34,7 +34,7 @@ parse_transform(Forms,O) ->
                 unify(T, lookup(FunName, Env)) ++ Cs ++ AccCs 
             end
         , [], Functions),
-        hm:solve(Cs,hm:emptySub())
+        hm:solve(Cs)
     of  
         Sub -> 
             lists:map(fun({X,T}) -> 
