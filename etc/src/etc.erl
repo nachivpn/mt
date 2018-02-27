@@ -21,25 +21,25 @@
 parse_transform(Forms,O) ->
     Functions = lists:filter(
         fun (Node) -> element(1, Node) == function end, Forms),
-    Env = lists:foldl(fun(F, AccEnv) -> 
-            FunName = element(4, erl_syntax:function_name(F)),
-            env:extend(FunName, env:fresh(), AccEnv)
-        end
-        , rt:defaultEnv(), Functions),
     try
-        Cs = lists:foldl(
-            fun(F,AccCs) ->
-                FunName = element(4, erl_syntax:function_name(F)),
-                {T, Cs} = infer(Env, F),
-                unify(T, lookup(FunName, Env)) ++ Cs ++ AccCs 
+        lists:foldl(
+            fun(F, AccEnv) ->
+                FunName     = element(4, erl_syntax:function_name(F)),
+                FreshT      = env:fresh(),
+                AccEnv_     = env:extend(FunName, FreshT, AccEnv),
+                % AccEnv_ is used for inference (only) to allow type checking recursive fns
+                {InfT, Cs}  = infer(AccEnv_, F), 
+                Sub         = hm:solve(Cs ++ unify(InfT, FreshT)),
+                T           = hm:subT(InfT, Sub),
+                PolyT       = hm:generalize(T, AccEnv),
+                env:extend(FunName, PolyT, AccEnv)
             end
-        , [], Functions),
-        hm:solve(Cs)
+        , rt:defaultEnv(), Functions)
     of  
-        Sub -> 
+        Env -> 
             lists:map(fun({X,T}) -> 
                 io:fwrite("~p :: ",[X]), 
-                hm:pretty(hm:subT(T,Sub)), 
+                hm:pretty(T), 
                 io:fwrite("~n",[])
             end, lists:reverse(Env))
     catch

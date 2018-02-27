@@ -198,7 +198,12 @@ prettify(Env, {tvar, A}) ->
         _         -> 
             io:fwrite("~c", [X]),
             Env
-    end.
+    end;
+prettify(Env,{forall, T, A}) ->
+    io:fwrite("forall ",[]),
+    Env_ = prettify(Env, T),
+    io:fwrite(". ",[]),
+    prettify(Env_, A).
 
 prettyCs([], S) -> S;
 prettyCs([{T1,T2}|Cs],S) -> 
