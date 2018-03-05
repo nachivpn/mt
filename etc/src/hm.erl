@@ -1,6 +1,6 @@
 -module(hm).
 -export([solve/1,prettyCs/2,prettify/2,emptySub/0,subT/2,freshen/1,generalize/2]).
--export([bt/1,funt/2,tvar/1,forall/2,pretty/1,subE/2]).
+-export([bt/1,funt/2,tvar/1,forall/3,pretty/1,subE/2,subPs/2]).
 -export_type([constraint/0,env/0,type/0]).
 
 
@@ -10,18 +10,21 @@
 
 -type constraint() :: {type(), type()}.
 
+-type class() :: string().
+-type predicate() :: {class(), type()}.
+
 %%%%%%%%%%%%% Type variable constructors
 
 -type type() :: 
     {bt,type()}
     | {funt, [type()], type()} 
     | {tvar, type()}
-    | {forall, type(), type()}.
+    | {forall, type(), [predicate()], type()}.
 
-bt (A)      -> {bt, A}.
-funt (A,B)  -> {funt, A, B}.
-tvar (A)    -> {tvar, A}.
-forall (X,A)    -> {forall, tvar(X), A}.
+bt (A)          -> {bt, A}.
+funt (A,B)      -> {funt, A, B}.
+tvar (A)        -> {tvar, A}.
+forall (X,P,A)  -> {forall, tvar(X), P, A}.
 
 %%%%%%%%%%%% Constraint solver
 
@@ -93,15 +96,24 @@ subT ({bt, T}, _)  ->
     {bt, T};
 subT ({funt, As, B},Sub)   ->
     {funt, lists:map(fun(A) -> subT (A,Sub) end, As), subT(B,Sub)};
-subT ({forall, {tvar, X}, A}, Sub)   ->
+subT ({forall, {tvar, X}, Ps, A}, Sub)   ->
     case maps:is_key(X,Sub) of
-        true    ->  {forall, {tvar, X}, subT(A,maps:remove(X,Sub))};  % avoids name capture!
-        false   ->  {forall, {tvar, X}, subT(A,Sub)}
+        true    ->  {forall, {tvar, X}, subPs(Ps,Sub) ,subT(A,maps:remove(X,Sub))};  % avoids name capture!
+        false   ->  {forall, {tvar, X}, subPs(Ps,Sub) ,subT(A,Sub)}
     end.
 
 % Repetitive substution on a constraint
 -spec subC(constraint(), sub()) -> constraint().
 subC ({T1,T2},S) -> {subT(T1,S),subT(T2,S)}.
+
+% Repetitive substution on a predicate
+-spec subP(predicate(), sub()) -> predicate().
+subP ({C,T},S) -> {C,subT(T,S)}.
+
+% Repetitive substution on a predicate
+-spec subPs([predicate()], sub()) -> predicate().
+subPs (Ps,S) -> lists:map(fun(P) -> subP(P,S) end, Ps).
+
 
 % Repetitive substution on a environment
 -spec subE(env(), sub()) -> env().
@@ -113,12 +125,7 @@ occurs (V,{funt, As, B}) ->
 occurs (_,{bt,_}) ->
     false;
 occurs (V,{tvar, X}) ->
-    V == X;
-occurs (V,{forall, {tvar, X}, A}) ->
-    case X == V of
-        true -> false ;  
-        false -> occurs (V,A)
-    end.
+    V == X.
 
 % All free type variables in the given type
 -spec free(type()) -> set:set(tvar()).
@@ -130,7 +137,7 @@ free ({funt, As, B})     ->
             , sets:new(), As)
         , free (B));
 free ({tvar, A})        -> sets:add_element(A,sets:new());
-free ({forall, {tvar, X}, A}) 
+free ({forall, {tvar, X}, _, A}) 
                         -> sets:del_element(X, free(A)).
 
 -spec freeInEnv(env()) -> set:set(tvar()).
@@ -151,25 +158,34 @@ generalize (Type,Env) ->
     bindGVs(sets:to_list(Generalizable),Type).
 
 % bind generalized variables
+% TODO: currenlty (simply) adds an empty list of predicates!
+% TODO: These must be appropriate predicates obtained from inference
 -spec bindGVs([tvar()],type()) -> type().
 bindGVs ([],T)      -> T;
-bindGVs ([X|Xs],T)  -> {forall, {tvar, X}, bindGVs(Xs,T)}.
+bindGVs ([X|Xs],T)  -> {forall, {tvar, X}, [], bindGVs(Xs,T)}.
 
 -spec bound(type()) -> [tvar()].
-bound ({forall, {tvar, X}, A}) -> [X | bound(A)];
+bound ({forall, {tvar, X}, _, A}) -> [X | bound(A)];
 bound (_) -> [].
 
--spec stripbound(type()) -> type().
-stripbound ({forall, {tvar, _}, A}) -> stripbound(A);
-stripbound (T) -> T.
+-spec stripbound(type()) -> {type(),[predicate()]}.
+stripbound ({forall, {tvar, _}, Ps, A}) -> 
+    {T,Ps_} = stripbound(A),
+    {T,Ps ++ Ps_};
+stripbound (T) -> {T,[]}.
 
 % replace all bound variables with fresh variables
--spec freshen (type()) -> type().
+-spec freshen (type()) -> {type(), [predicate()]}.
 freshen (T) ->
-    lists:foldr(
-        fun(V, TAcc)->
-            subT(TAcc, maps:put(V,env:fresh(),emptySub()))
-        end, stripbound(T), bound(T)).
+    BoundVars = bound(T),
+    % substitution with a fresh variable for every bound variable
+    Sub = lists:foldr(
+        fun(V, SAcc)->
+            comp(SAcc, maps:put(V,env:fresh(),emptySub()))
+        end, emptySub(), BoundVars),
+    {StrippedT, Ps} = stripbound(T),
+    { subT(StrippedT, Sub)
+    , subPs(Ps,Sub)}.
 
 % pretty :: Type -> IO
 pretty(T) -> 
@@ -199,10 +215,15 @@ prettify(Env, {tvar, A}) ->
             io:fwrite("~c", [X]),
             Env
     end;
-prettify(Env,{forall, T, A}) ->
-    io:fwrite("forall ",[]),
+prettify(Env,{forall, T, Ps, A}) ->
+    io:fwrite("∀",[]),
     Env_ = prettify(Env, T),
-    io:fwrite(". ",[]),
+    io:fwrite("[",[]),
+    lists:map(fun({C,T_}) -> 
+        io:fwrite("~p ",[C]),
+        prettify(Env, T_)
+    end, Ps),
+    io:fwrite("].",[]),
     prettify(Env_, A).
 
 prettyCs([], S) -> S;
