@@ -1,6 +1,6 @@
 -module(hm).
 -export([solve/1,prettyCs/2,prettify/2,emptySub/0,subT/2,freshen/1,generalize/2]).
--export([bt/1,funt/2,tvar/1,forall/3,pretty/1,subE/2,subPs/2]).
+-export([bt/1,funt/2,tvar/1,forall/3,pretty/1,subE/2,subPs/2,entail/2]).
 -export_type([constraint/0,env/0,type/0]).
 
 
@@ -187,6 +187,17 @@ freshen (T) ->
     { subT(StrippedT, Sub)
     , subPs(Ps,Sub)}.
 
+%%%%%%%%%%%%%%%%%%%%
+%% Predicate solver
+%%%%%%%%%%%%%%%%%%%%
+
+-spec entail([predicate()],[predicate()]) -> boolean().
+entail(Given,Ps) -> 
+    lists:all(fun(P) -> lists:member(P,Given) end, Ps).
+
+%%%%%%%%%%%%%%%%%%%%
+%% Pretty printing
+%%%%%%%%%%%%%%%%%%%%
 % pretty :: Type -> IO
 pretty(T) -> 
     prettify([],T),

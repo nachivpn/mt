@@ -24,9 +24,16 @@ parse_transform(Forms,_) ->
                 FreshT      = env:fresh(),
                 AccEnv_     = env:extend(FunName, FreshT, AccEnv),
                 % AccEnv_ is used for inference (only) to allow type checking recursive fns
-                {InfT, Cs, _}  = infer(AccEnv_, F),
-                Sub         = hm:solve(Cs ++ unify(InfT, FreshT)),
+                {InfT, InfCs, InfPs}  = infer(AccEnv_, F),
+                Sub         = hm:solve(InfCs ++ unify(InfT, FreshT)),
                 T           = hm:subT(InfT, Sub),
+                Ps          = hm:subPs(InfPs,Sub), 
+                PSolve      = hm:entail(rt:defaultClasses(), Ps),
+                case PSolve of
+                    true -> ok;
+                    false -> erlang:error(
+                        {type_error,"unable to solve class constraints: " ++ util:to_string(Ps)})
+                end,
                 PolyT       = hm:generalize(T, AccEnv),
                 env:extend(FunName, PolyT, AccEnv)
             end

@@ -1,5 +1,11 @@
 -module(rt).
--export([defaultEnv/0]).
+-export([defaultEnv/0,defaultClasses/0]).
+
+-spec defaultClasses() -> [hm:predicate()].
+defaultClasses() -> [
+    {"Num",hm:bt(integer)},
+    {"Num",hm:bt(float)}
+].
 
 -spec defaultEnv() -> hm:env().
 defaultEnv() ->
