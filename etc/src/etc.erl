@@ -28,13 +28,8 @@ parse_transform(Forms,_) ->
                 Sub         = hm:solve(InfCs ++ unify(InfT, FreshT)),
                 T           = hm:subT(InfT, Sub),
                 Ps          = hm:subPs(InfPs,Sub), 
-                PSolve      = hm:entail(rt:defaultClasses(), Ps),
-                case PSolve of
-                    true -> ok;
-                    false -> erlang:error(
-                        {type_error,"unable to solve class constraints: " ++ util:to_string(Ps)})
-                end,
-                PolyT       = hm:generalize(T, AccEnv),
+                RemPs      = hm:solvePreds(rt:defaultClasses(), Ps),
+                PolyT       = hm:generalize(T, AccEnv, RemPs),
                 env:extend(FunName, PolyT, AccEnv)
             end
         , rt:defaultEnv(), Functions)
@@ -56,13 +51,15 @@ infer (Env,Node) ->
     case type(Node) of
         integer -> 
             {integer,_,_} = Node,
-            {hm:bt(integer),[],[]};
+            X = env:fresh(),
+            {X,[],[{"Num",X}]};
         string ->
             {string,_,_} = Node,
             {hm:bt(string),[],[]};
         float ->
             {float,_,_} = Node,
-            {hm:bt(float),[],[]};
+            X = env:fresh(),
+            {X,[],[{"Fractional",X}]};
         function ->
             Clauses = function_clauses(Node),
             % list of clause inference results

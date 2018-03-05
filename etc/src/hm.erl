@@ -1,6 +1,6 @@
 -module(hm).
--export([solve/1,prettyCs/2,prettify/2,emptySub/0,subT/2,freshen/1,generalize/2]).
--export([bt/1,funt/2,tvar/1,forall/3,pretty/1,subE/2,subPs/2,entail/2]).
+-export([solve/1,prettyCs/2,prettify/2,emptySub/0,subT/2,freshen/1,generalize/3]).
+-export([bt/1,funt/2,tvar/1,forall/3,pretty/1,subE/2,subPs/2,solvePreds/2]).
 -export_type([constraint/0,env/0,type/0]).
 
 
@@ -148,21 +148,21 @@ freeInEnv (VTs) ->
             lists:map(fun({_,T}) -> free(T) end, VTs)).
 
 % converts a mono type to a poly type
--spec generalize(type(),env()) -> type().
-generalize (Type,Env) ->
+-spec generalize(type(),env(),[predicate()]) -> type().
+generalize (Type,Env,Ps) ->
     Mono = free (Type),
     BoundInEnv = freeInEnv(Env),
     % Generalizable variables of a type are
     % monotype variables that are not bound in environment
     Generalizable = sets:subtract(Mono, BoundInEnv),
-    bindGVs(sets:to_list(Generalizable),Type).
+    bindGVs(sets:to_list(Generalizable),Type,Ps).
 
 % bind generalized variables
 % TODO: currenlty (simply) adds an empty list of predicates!
 % TODO: These must be appropriate predicates obtained from inference
--spec bindGVs([tvar()],type()) -> type().
-bindGVs ([],T)      -> T;
-bindGVs ([X|Xs],T)  -> {forall, {tvar, X}, [], bindGVs(Xs,T)}.
+-spec bindGVs([tvar()],type(),[predicate()]) -> type().
+bindGVs ([],T,_)      -> T;
+bindGVs ([X|Xs],T,Ps)  -> {forall, {tvar, X}, filterPreds(Ps,{tvar,X}), bindGVs(Xs,T,Ps)}.
 
 -spec bound(type()) -> [tvar()].
 bound ({forall, {tvar, X}, _, A}) -> [X | bound(A)];
@@ -191,9 +191,19 @@ freshen (T) ->
 %% Predicate solver
 %%%%%%%%%%%%%%%%%%%%
 
--spec entail([predicate()],[predicate()]) -> boolean().
-entail(Given,Ps) -> 
-    lists:all(fun(P) -> lists:member(P,Given) end, Ps).
+-spec filterPreds([predicate()],type()) -> [predicate()].
+filterPreds(Ps,T) -> lists:filter(fun({_,X}) -> T == X end,Ps).
+
+-spec solvePreds([predicate()],[predicate()]) -> [predicate()].
+solvePreds(Given,Ps) -> 
+    Filtered = lists:filter(fun(P) -> not lists:member(P, Given) end, Ps),
+    Unsolved = lists:any(
+        fun({_,X}) -> case X of {tvar,_} -> false; _ -> true end end, Filtered),
+    case Unsolved of
+        true -> erlang:error({type_error, "Unsolved predicates in " ++ util:to_string(Filtered)});
+        false -> Filtered
+    end.
+    
 
 %%%%%%%%%%%%%%%%%%%%
 %% Pretty printing
@@ -231,8 +241,9 @@ prettify(Env,{forall, T, Ps, A}) ->
     Env_ = prettify(Env, T),
     io:fwrite("[",[]),
     lists:map(fun({C,T_}) -> 
-        io:fwrite("~p ",[C]),
-        prettify(Env, T_)
+        io:fwrite("~s ",[C]),
+        prettify(Env, T_),
+        io:fwrite(";",[])
     end, Ps),
     io:fwrite("].",[]),
     prettify(Env_, A).
