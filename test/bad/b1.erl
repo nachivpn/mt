@@ -1,7 +1,6 @@
 -module (b1).
 -compile({parse_transform, etc}).
 
-nadd(X) -> "" + 1.
+f1() -> "" + 1.
 
-
-
+f2() -> 1 + "".
