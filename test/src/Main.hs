@@ -26,8 +26,6 @@ runTests (x:xs) allowedEc = do
 
 main :: IO ()
 main = do
-    x <- getCurrentDirectory
-    print x
     let erlFiles = filter (isSuffixOf ".erl")
     goodTests <- erlFiles <$> listDirectory goodDir
     badTests <- erlFiles <$> listDirectory badDir
