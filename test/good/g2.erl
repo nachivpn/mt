@@ -1,7 +1,6 @@
 -module(g2).
--compile(export_all).
+-compile({parse_transform, etc}).
 
-description() -> "Boolean expressions".
 
 benot(X) -> not X.
 
@@ -13,7 +12,7 @@ bexor (X,Y) -> X xor Y.
 
 beorelse (X,Y) -> X orelse Y.
 
-beandalso (x,Y) -> X andalso Y.
+beandalso (X,Y) -> X andalso Y.
 
 
 

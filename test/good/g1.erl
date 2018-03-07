@@ -1,7 +1,5 @@
 -module (g1).
--compile(export_all).
-
-description() -> "Arithmetic expressions".
+-compile({parse_transform, etc}).
 
 npos(X) -> + X.
 

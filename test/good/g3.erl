@@ -1,7 +1,5 @@
 -module(g3).
--compile(export_all).
-
-description() -> "Comparison expressions".
+-compile({parse_transform, etc}).
 
 ceq(X,Y) -> X == Y.
 

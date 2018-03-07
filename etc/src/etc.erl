@@ -58,8 +58,8 @@ infer (Env,Node) ->
             {hm:bt(string),[],[]};
         float ->
             {float,_,_} = Node,
-            X = env:fresh(),
-            {X,[],[{"Fractional",X}]};
+            % X = env:fresh(),
+            {hm:bt(float),[],[]};
         function ->
             Clauses = function_clauses(Node),
             % list of clause inference results
