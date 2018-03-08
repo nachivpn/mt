@@ -1,10 +1,7 @@
 -module(env).
--export([empty/0,fresh/0,lookup/2,extend/3,free/2,is_bound/2,mapV/2]).
+-export([empty/0,lookup/2,extend/3,free/2,is_bound/2,mapV/2]).
 
 empty() -> [].
-
-% fresh :: Type
-fresh() -> hm:tvar(make_ref()).
 
 % lookup :: (Var, [Var,Type])  -> Type
 lookup(X,Env) -> proplists:get_value(X, Env).

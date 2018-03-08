@@ -21,7 +21,7 @@ parse_transform(Forms,_) ->
         lists:foldl(
             fun(F, AccEnv) ->
                 FunName     = element(4, erl_syntax:function_name(F)),
-                FreshT      = env:fresh(),
+                FreshT      = hm:fresh(element(2, F)),
                 AccEnv_     = env:extend(FunName, FreshT, AccEnv),
                 % AccEnv_ is used for inference (only) to allow type checking recursive fns
                 {InfT, InfCs, InfPs}  = infer(AccEnv_, F),
@@ -50,16 +50,15 @@ parse_transform(Forms,_) ->
 infer (Env,Node) -> 
     case type(Node) of
         integer -> 
-            {integer,_,_} = Node,
-            X = env:fresh(),
+            {integer,L,_} = Node,
+            X = hm:fresh(L),
             {X,[],[{"Num",X}]};
         string ->
-            {string,_,_} = Node,
-            {hm:bt(string),[],[]};
+            {string,L,_} = Node,
+            {hm:bt(string,L),[],[]};
         float ->
-            {float,_,_} = Node,
-            % X = env:fresh(),
-            {hm:bt(float),[],[]};
+            {float,L,_} = Node,
+            {hm:bt(float,L),[],[]};
         function ->
             Clauses = function_clauses(Node),
             % list of clause inference results
@@ -76,11 +75,12 @@ infer (Env,Node) ->
             {lists:last(InfTypes), InfCs ++ UniCs, InfPs};
         clause ->
             ClausePatterns = clause_patterns(Node),
+            L = element(2,Node),
             % Type assumption for every argument
             EnvEntries = lists:map(
                 fun(Pattern) ->
                     case Pattern of
-                        {var, _, X} -> {X,env:fresh()}
+                        {var, L, X} -> {X,hm:fresh(L)}
                     end
                 end, ClausePatterns),
             Env_ = lists:foldr(
@@ -95,15 +95,15 @@ infer (Env,Node) ->
             {ReturnType, CsLast, PsLast} = infer(Env__, lists:last(Body)),
             {hm:funt(
                 lists:map (fun ({_,Typ}) -> Typ end, EnvEntries)
-                , ReturnType)
+                , ReturnType,L)
             , CsBody ++ CsLast 
             , PsBody ++ PsLast};
         variable ->
-            {var, _, X} = Node,
-            {T, Ps} = lookup(X, Env),
+            {var, L, X} = Node,
+            {T, Ps} = lookup(X, Env, L),
             {T, [], Ps};
         application ->
-            {call,_,F,Args} = Node,
+            {call,L,F,Args} = Node,
             {T1,Cs1,Ps1} = infer(Env, F),            
             {T2,Cs2,Ps2} = lists:foldl(
                 fun(X, {AccT,AccCs,AccPs}) -> 
@@ -111,18 +111,18 @@ infer (Env,Node) ->
                     {AccT ++ [T], AccCs ++ Cs, AccPs ++ Ps}
                 end
                 , {[],[],[]}, Args),
-            V = env:fresh(),
-            {V, Cs1 ++ Cs2 ++ unify(T1, hm:funt(T2,V)), Ps1 ++ Ps2};
+            V = hm:fresh(L),
+            {V, Cs1 ++ Cs2 ++ unify(T1, hm:funt(T2,V,L)), Ps1 ++ Ps2};
         infix_expr ->
-            {op,_,Op,E1,E2} = Node,
-            {T, Ps} = lookup(Op, Env),
+            {op,L,Op,E1,E2} = Node,
+            {T, Ps} = lookup(Op, Env,L),
             {T1, Cs1, Ps1} = infer(Env, E1),
             {T2, Cs2, Ps2} = infer(Env, E2),
-            V = env:fresh(),
-            {V, Cs1 ++ Cs2 ++ unify(T, hm:funt([T1,T2],V)), Ps ++ Ps1 ++ Ps2};
+            V = hm:fresh(L),
+            {V, Cs1 ++ Cs2 ++ unify(T, hm:funt([T1,T2],V,L)), Ps ++ Ps1 ++ Ps2};
         atom ->
-            {atom,_,X} = Node,
-            {T, Ps} = lookup(X,Env),
+            {atom,L,X} = Node,
+            {T, Ps} = lookup(X,Env,L),
             {T,[],Ps};
         _ -> io:fwrite("INTERNAL: NOT implemented: ~p~n",[Node])
     end.
@@ -133,10 +133,10 @@ checkExpr(Env,{match,_,LNode,RNode}) ->
     {LType, Cons2, PsL} = infer(Env_,LNode),
     {RType, Cons3, PsR} = infer(Env,RNode),
     {Env_, Cons1 ++ Cons2 ++ Cons3 ++ [{LType,RType}], Ps ++ PsL ++ PsR};
-checkExpr(Env,{var,_,X}) ->
+checkExpr(Env,{var,L,X}) ->
     case env:is_bound(X,Env) of
         true    -> {Env,[],[]};
-        false   -> {env:extend(X,env:fresh(),Env), [],[]}
+        false   -> {env:extend(X,hm:fresh(L),Env), [],[]}
     end;
 checkExpr(Env,ExprNode) -> 
     {_,Constraints,Ps} = infer(Env, ExprNode),
@@ -164,9 +164,9 @@ unify(Types) ->
 -spec unify(hm:type(),hm:type()) -> [hm:constraint()].
 unify(Type1,Type2) -> [{Type1,Type2}].
 
--spec lookup(hm:tvar(),hm:env()) -> {hm:type(),[hm:predicate()]}.
-lookup(X,Env) ->
+-spec lookup(hm:tvar(),hm:env(),integer()) -> {hm:type(),[hm:predicate()]}.
+lookup(X,Env,L) ->
     case env:lookup(X,Env) of
-        undefined   -> erlang:error({type_error,util:to_string(X) ++ " not bound!"});
+        undefined   -> erlang:error({type_error,util:to_string(X) ++ " not bound on line " ++ util:to_string(L)});
         T           -> hm:freshen(T)
     end.

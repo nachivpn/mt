@@ -1,25 +1,42 @@
 -module (g4).
 -compile({parse_transform, etc}).
--compile(export_all).
 
+% "Erlangy" arithmetic
 
 foo1() -> 1 + 1.5.
 
 foo2() -> 1 + 2.
 
-foo3() -> 1.5.
+foo3() -> 1.5 + 4.5.
 
-foo4() -> 
-    X = foo3(),
-    X;
-foo4() -> 
-    3.
+foo4() -> 1.5;
+foo4() -> 3.
 
 add (A,B) -> A + B.
 
-foo5(X,Y) -> 
-    Z = add(X,Y),
-    Z div Z.
+addTestII() -> add(1,2).
+
+addTestIF() -> add(1,3.5).
+
+addTestFF() -> add(4.5,3.5).
+
+getInt() -> 1.
+
+getFloat() -> 1.5.
+
+addTestVars() ->
+    X = getInt(),
+    Y = getFloat(),
+    add(X,Y).
+
+divTest() ->
+    X = getInt(),
+    X div X.
+
+% use nums with integer operator
+foo5(X,Y) -> add(X,Y) div X.
+
+% use integer with num operator 
+foo6() -> X = 6, add(X, X).
 
 
-foo6(X) -> X + 5.5.

@@ -3,15 +3,15 @@
 
 -spec defaultClasses() -> [hm:predicate()].
 defaultClasses() -> [
-    {"Num",hm:bt(integer)},
-    {"Num",hm:bt(float)},
-    {"Fractional",hm:bt(float)}
+    {"Num",hm:bt(integer,0)},
+    {"Num",hm:bt(float,0)},
+    {"Fractional",hm:bt(float,0)}
 ].
 
 -spec defaultEnv() -> hm:env().
 defaultEnv() ->
     lists:foldl(fun({X,T},Env) -> env:extend(X,T,Env) end, env:empty(), [
-        {'+', hm:forall(a,[{"Num", hm:tvar(a)}],
-                hm:funt([hm:tvar(a),hm:tvar(a)],hm:tvar(a))) },
-        {'div', hm:funt([hm:bt(integer),hm:bt(integer)],hm:bt(integer))}
+        {'+', hm:forall(a,[{"Num", hm:tvar(a,0)}],
+                hm:funt([hm:tvar(a,0),hm:tvar(a,0)],hm:tvar(a,0),0),0) },
+        {'div', hm:funt([hm:bt(integer,0),hm:bt(integer,0)],hm:bt(integer,0),0)}
     ]).
