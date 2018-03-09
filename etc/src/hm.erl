@@ -187,8 +187,8 @@ generalize (Type,Env,Ps) ->
 bindGVs ([],T,_)      -> T;
 bindGVs ([X|Xs],T,Ps)  -> {forall, {tvar,0, X}, filterPreds(Ps,{tvar,0,X}), bindGVs(Xs,T,Ps)}.
 
--spec bound(type()) -> [tvar()].
-bound ({forall, {tvar, X}, _, A}) -> [X | bound(A)];
+-spec bound(type()) -> [{tvar(),integer()}].
+bound ({forall, {tvar,L,X},_, A}) -> [{X,L} | bound(A)];
 bound (_) -> [].
 
 -spec stripbound(type()) -> {type(),[predicate()]}.
@@ -203,8 +203,8 @@ freshen (T) ->
     BoundVars = bound(T),
     % substitution with a fresh variable for every bound variable
     Sub = lists:foldr(
-        fun(V, SAcc)->
-            comp(SAcc, maps:put(V,env:fresh(),emptySub()))
+        fun({V,L}, SAcc)->
+            comp(SAcc, maps:put(V,hm:fresh(L),emptySub()))
         end, emptySub(), BoundVars),
     {StrippedT, Ps} = stripbound(T),
     { subT(StrippedT, Sub)
