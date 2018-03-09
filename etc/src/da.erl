@@ -1,38 +1,37 @@
 -module(da).
--export([parse_transform/2]).
+-export([mkSCCs/1]).
 
-getName (Fun) -> element(3,Fun).
-getArgLen (Fun) -> element(4,Fun).
-getClauses (Fun) -> element(5,Fun).
-
-parse_transform(Forms,_) ->
-    Functions = lists:filter(
-        fun (Node) -> element(1, Node) == function end, Forms),
+mkSCCs(Functions) ->
     Graph = digraph:new(),
-    lists:map(fun(Fun) -> digraph:add_vertex(Graph,{getName(Fun),getArgLen(Fun)}) end, Functions),
+    VFuns = lists:map(fun(Fun) -> 
+        V = {util:getFnName(Fun),util:getFnArgLen(Fun)},
+        digraph:add_vertex(Graph,V),
+        {V,Fun}
+    end, Functions),
     % For every function
     lists:map(fun(Fun) ->
-        Clauses = getClauses(Fun),
+        Clauses = util:getFnClauses(Fun),
         % a function needs the type of the function calls in it's body
         % hence edges are of from FromV -(needed_by)-> ToV
-        ToV = {getName(Fun),getArgLen(Fun)},
+        ToV = {util:getFnName(Fun),util:getFnArgLen(Fun)},
         % For every clause
         lists:map(fun(C) ->
             % get calls in a clause 
             FromVs = getCallsFromClause(C),
             % add all the calls as edges to the graph
             lists:map(fun(FromV)-> 
-                % io:fwrite("DEBUG: ~p => ~p ~n",[FromV,ToV]),
                 digraph:add_edge(Graph,FromV,ToV) 
             end, FromVs)
         end, Clauses)
     end, Functions),
     SCCs = digraph_utils:strong_components(Graph),
-    io:fwrite("DEBUG: SCCs = ~p~n",[SCCs]),
     SCCGraph = buildSccGraph(Graph,SCCs),
     SortedSCCs = digraph_utils:topsort(SCCGraph),
-    io:fwrite("DEBUG: SortedSCCs = ~p~n",[SortedSCCs]),
-    Forms.
+    lists:map(fun(SCC) ->
+        lists:map(fun(V) ->
+            element(2,lists:keyfind(V,1,VFuns))
+        end, SCC)
+    end, SortedSCCs).
 
 getCallsFromClause(Clause) -> 
     getCallsFromBody(element(5,Clause)).
@@ -40,6 +39,11 @@ getCallsFromClause(Clause) ->
 getCallsFromBody(Exprs) -> 
     lists:concat(
         lists:map(fun getCallsFromExpr/1,Exprs)).
+
+% TODO: unmatched cases: 
+% - call to fn in qualified with module, 
+% - fun foo/x
+% - fun module:foo/x
 
 getCallsFromExpr({call,_,{atom,_,Fn},FnArgs}) ->
     [ {Fn,length(FnArgs)} | 

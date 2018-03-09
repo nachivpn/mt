@@ -17,22 +17,11 @@
 parse_transform(Forms,_) ->
     Functions = lists:filter(
         fun (Node) -> element(1, Node) == function end, Forms),
+    SCCs = da:mkSCCs(Functions),
     try
-        lists:foldl(
-            fun(F, AccEnv) ->
-                FunName     = element(4, erl_syntax:function_name(F)),
-                FreshT      = hm:fresh(element(2, F)),
-                AccEnv_     = env:extend(FunName, FreshT, AccEnv),
-                % AccEnv_ is used for inference (only) to allow type checking recursive fns
-                {InfT, InfCs, InfPs}  = infer(AccEnv_, F),
-                Sub         = hm:solve(InfCs ++ unify(InfT, FreshT)),
-                T           = hm:subT(InfT, Sub),
-                Ps          = hm:subPs(InfPs,Sub), 
-                RemPs      = hm:solvePreds(rt:defaultClasses(), Ps),
-                PolyT       = hm:generalize(T, AccEnv, RemPs),
-                env:extend(FunName, PolyT, AccEnv)
-            end
-        , rt:defaultEnv(), Functions)
+        lists:foldl(fun(SCC, AccEnv) ->
+               typeCheckSCC(SCC,AccEnv)
+        end, rt:defaultEnv(), SCCs)
     of  
         Env -> 
             lists:map(fun({X,T}) -> 
@@ -43,7 +32,33 @@ parse_transform(Forms,_) ->
     catch
         error:{type_error,Reason} -> erlang:error("Type Error: " ++ Reason)
     end,
-    Forms.
+    Forms.    
+
+typeCheckSCC(Functions,Env) ->
+    % assign a fresh type variable to every function
+    FreshEnv = lists:foldl(fun(F,AccEnv) ->  
+        env:extend(util:getFnName(F), hm:fresh(util:getLn(F)), AccEnv)
+    end, Env, Functions),
+    {InfCs,InfPs} = lists:foldl(fun(F,{AccCs,AccPs}) ->
+        FunName = util:getFnName(F),
+        {T,Cs,Ps} = infer(FreshEnv,F),
+        {FreshT,_} = lookup(FunName, FreshEnv, util:getLn(F)),
+        { unify(T, FreshT) ++ Cs ++ AccCs
+        , Ps ++ AccPs}
+    end, {[],[]}, Functions),
+    Sub     = hm:solve(InfCs),
+    Ps      = hm:subPs(InfPs,Sub),
+    RemPs   = hm:solvePreds(rt:defaultClasses(), Ps),
+    SubdEnv = hm:subE(FreshEnv,Sub), 
+    lists:foldl(fun(F, AccEnv) ->
+        FunName = util:getFnName(F),
+        %lookup type from the substituted environment
+        {T,_}  = lookup(FunName, SubdEnv, util:getLn(F)),
+        % generalize type wrt given environment
+        PolyT   = hm:generalize(T, AccEnv, RemPs),
+        env:extend(FunName, PolyT, AccEnv)
+    end, Env, Functions).
+
     
 
 -spec infer(hm:env(), erl_syntax:syntaxTree()) -> {hm:type(),[hm:constraint()],[hm:predicate()]}.
@@ -104,7 +119,7 @@ infer (Env,Node) ->
             {T, [], Ps};
         application ->
             {call,L,F,Args} = Node,
-            {T1,Cs1,Ps1} = infer(Env, F),            
+            {T1,Cs1,Ps1} = infer(Env, F),   
             {T2,Cs2,Ps2} = lists:foldl(
                 fun(X, {AccT,AccCs,AccPs}) -> 
                     {T,Cs,Ps} = infer(Env,X),
@@ -123,6 +138,7 @@ infer (Env,Node) ->
         atom ->
             {atom,L,X} = Node,
             {T, Ps} = lookup(X,Env,L),
+            io:fwrite("DEBUG In ~p ~p :: ~p~n",[Env,X,T]),
             {T,[],Ps};
         _ -> io:fwrite("INTERNAL: NOT implemented: ~p~n",[Node])
     end.
