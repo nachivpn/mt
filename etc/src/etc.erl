@@ -137,9 +137,12 @@ infer (Env,Node) ->
             {V, Cs1 ++ Cs2 ++ unify(T, hm:funt([T1,T2],V,L)), Ps ++ Ps1 ++ Ps2};
         atom ->
             {atom,L,X} = Node,
-            {T, Ps} = lookup(X,Env,L),
-            io:fwrite("DEBUG In ~p ~p :: ~p~n",[Env,X,T]),
-            {T,[],Ps};
+            case X of
+                B when (B == true) or (B == false) -> 
+                        {hm:bt(boolean,L),[],[]};
+                _ ->    {T, Ps} = lookup(X,Env,L), {T,[],Ps}
+            end;
+            
         _ -> io:fwrite("INTERNAL: NOT implemented: ~p~n",[Node])
     end.
 

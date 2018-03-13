@@ -41,7 +41,4 @@ foo6() -> X = 6, add(X, X).
 
 bar(Y) -> Y + 1.
 
-foo(X,Y) ->
-    A = bar(X + 1.5),
-    B = bar(Y div 2),
-    3.
+foo(X,Y) -> X = bar(1.0), Y = bar(1) div 1, Y.
