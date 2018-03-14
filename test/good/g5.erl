@@ -10,4 +10,11 @@ foo1() -> foo1().
 
 foo2() -> foo1().
 
-foo(X,Y) -> foo(X,X) + foo(Y,Y).
+fib(0) -> 0;
+fib(1) -> 1;
+fib(N) -> fib(N-1) + fib(N-2).
+
+fac(0) -> 1;
+fac(N) -> N * fac(N-1).
+
+

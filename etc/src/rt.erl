@@ -30,5 +30,13 @@ defaultEnv() ->
         {'or', hm:funt([hm:bt(boolean,-1),hm:bt(boolean,-2)],hm:bt(boolean,0),0)},
         {'xor', hm:funt([hm:bt(boolean,-1),hm:bt(boolean,-2)],hm:bt(boolean,0),0)},
         {'orelse', hm:funt([hm:bt(boolean,-1),hm:bt(boolean,-2)],hm:bt(boolean,0),0)},
-        {'andalso', hm:funt([hm:bt(boolean,-1),hm:bt(boolean,-2)],hm:bt(boolean,0),0)}
+        {'andalso', hm:funt([hm:bt(boolean,-1),hm:bt(boolean,-2)],hm:bt(boolean,0),0)},
+        {'==', hm:funt([hm:tvar(a,-1),hm:tvar(b,-2)],hm:bt(boolean,0),0)},
+        {'/=', hm:funt([hm:tvar(a,-1),hm:tvar(b,-2)],hm:bt(boolean,0),0)},
+        {'=<', hm:funt([hm:tvar(a,-1),hm:tvar(b,-2)],hm:bt(boolean,0),0)},
+        {'<', hm:funt([hm:tvar(a,-1),hm:tvar(b,-2)],hm:bt(boolean,0),0)},
+        {'>=', hm:funt([hm:tvar(a,-1),hm:tvar(b,-2)],hm:bt(boolean,0),0)},
+        {'>', hm:funt([hm:tvar(a,-1),hm:tvar(b,-2)],hm:bt(boolean,0),0)},
+        {'=:=', hm:funt([hm:tvar(a,-1),hm:tvar(b,-2)],hm:bt(boolean,0),0)},
+        {'=/=', hm:funt([hm:tvar(a,-1),hm:tvar(b,-2)],hm:bt(boolean,0),0)}
     ]).

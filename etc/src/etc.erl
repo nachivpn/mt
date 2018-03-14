@@ -91,15 +91,9 @@ infer (Env,Node) ->
         clause ->
             ClausePatterns = clause_patterns(Node),
             L = element(2,Node),
-            % Type assumption for every argument
-            EnvEntries = lists:map(
-                fun(Pattern) ->
-                    case Pattern of
-                        {var, L, X} -> {X,hm:fresh(L)}
-                    end
-                end, ClausePatterns),
-            Env_ = lists:foldr(
-                fun({X,T}, AccEnv) -> env:extend(X,T,AccEnv) end, Env, EnvEntries),
+            % Infer types of arguments (which are in the form of patterns)
+            % Env_ is Env extended with arg variables
+            {ArgTypes, Env_, CsArgs, PsArgs} = inferPatterns(Env,ClausePatterns),
             % ClauseGaurds = clause_guard(Node),
             Body = clause_body(Node),
             {Env__, CsBody, PsBody} =lists:foldl(
@@ -108,11 +102,9 @@ infer (Env,Node) ->
                     {Ei_, Csi ++ Csi_, Psi ++ Psi_}
                 end, {Env_,[],[]}, lists:droplast(Body)),
             {ReturnType, CsLast, PsLast} = infer(Env__, lists:last(Body)),
-            {hm:funt(
-                lists:map (fun ({_,Typ}) -> Typ end, EnvEntries)
-                , ReturnType,L)
-            , CsBody ++ CsLast 
-            , PsBody ++ PsLast};
+            {hm:funt(ArgTypes,ReturnType,L)
+            , CsArgs ++ CsBody ++ CsLast 
+            , PsArgs ++ PsBody ++ PsLast};
         variable ->
             {var, L, X} = Node,
             {T, Ps} = lookup(X, Env, L),
@@ -161,7 +153,21 @@ checkExpr(Env,ExprNode) ->
     {_,Constraints,Ps} = infer(Env, ExprNode),
     {Env,Constraints,Ps}.
 
-
+-spec inferPatterns(hm:env(),[erl_syntax:syntaxTree()]) -> {[hm:types()],hm:env(),[hm:constraint()],[hm:predicate()]}.
+inferPatterns(Env,ClausePatterns) ->
+    lists:foldr(
+        fun(Pattern,{AccTs,AccEnv,AccCs,AccPs}) ->
+            case Pattern of
+                {var, L, X} -> 
+                    FreshT = hm:fresh(L),
+                    AccEnv_ = env:extend(X,FreshT,AccEnv),
+                    {[FreshT | AccTs], AccEnv_, AccCs, AccPs};
+                _ ->
+                    %empty env is used for inference because?
+                    {InfT, InfCs, InfPs} = infer(env:empty(),Pattern),
+                    {[InfT | AccTs], AccEnv, InfCs ++ AccCs, InfPs ++ AccPs}
+            end
+        end, {[],Env,[],[]} ,ClausePatterns).
 %%%%%%%%%%%%%%%%%% Utilities
 
 % "pseudo unify" which returns constraints
