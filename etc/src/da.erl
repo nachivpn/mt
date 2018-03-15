@@ -42,13 +42,17 @@ getCallsFromBody(Exprs) ->
 
 % TODO: unmatched cases: 
 % - call to fn in qualified with module, 
-% - fun foo/x
 % - fun module:foo/x
 
+% case of standard call: "FnAtom(Args)" 
 getCallsFromExpr({call,_,{atom,_,Fn},FnArgs}) ->
     [ {Fn,length(FnArgs)} | 
         lists:concat(
             lists:map(fun getCallsFromExpr/1, FnArgs))];
+% If the value "fun Fn/Arity" is present in the body,
+% then the function (most probably) calls it!
+getCallsFromExpr({'fun',_,{function,Fn,Arity}}) ->
+    [ {Fn,Arity} ];
 getCallsFromExpr(E) when is_tuple(E) ->
     Es_ = erlang:tuple_to_list(E),
     lists:concat(lists:map(fun getCallsFromExpr/1, Es_));

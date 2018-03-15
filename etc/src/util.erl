@@ -1,6 +1,6 @@
 -module (util).
 -export([to_string/1,intersperse/2,interFoldEffect/4,
-    pairwiseChunk/1,getFnName/1,getFnArgLen/1,getFnClauses/1,getLn/1]).
+    pairwiseChunk/1,getFnName/1,getFnArgLen/1,getFnClauses/1,getLn/1,getFnQName/1]).
 
 to_string(X) -> lists:flatten(io_lib:format("~p",[X])).
 
@@ -26,3 +26,5 @@ getFnName (Fun) -> element(3,Fun).
 getFnArgLen (Fun) -> element(4,Fun).
 getFnClauses (Fun) -> element(5,Fun).
 getLn(Node) -> element(2,Node).
+
+getFnQName(Fun) -> {getFnName(Fun),getFnArgLen(Fun)}.

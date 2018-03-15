@@ -36,13 +36,14 @@ parse_transform(Forms,_) ->
 
 typeCheckSCC(Functions,Env) ->
     % assign a fresh type variable to every function
-    FreshEnv = lists:foldl(fun(F,AccEnv) ->  
-        env:extend(util:getFnName(F), hm:fresh(util:getLn(F)), AccEnv)
+    FreshEnv = lists:foldl(fun(F,AccEnv) -> 
+        FunQName = util:getFnQName(F), 
+        env:extend(FunQName, hm:fresh(util:getLn(F)), AccEnv)
     end, Env, Functions),
     {InfCs,InfPs} = lists:foldl(fun(F,{AccCs,AccPs}) ->
-        FunName = util:getFnName(F),
+        FunQName = util:getFnQName(F),
         {T,Cs,Ps} = infer(FreshEnv,F),
-        {FreshT,_} = lookup(FunName, FreshEnv, util:getLn(F)),
+        {FreshT,_} = lookup(FunQName, FreshEnv, util:getLn(F)),
         { unify(T, FreshT) ++ Cs ++ AccCs
         , Ps ++ AccPs}
     end, {[],[]}, Functions),
@@ -51,12 +52,12 @@ typeCheckSCC(Functions,Env) ->
     RemPs   = hm:solvePreds(rt:defaultClasses(), Ps),
     SubdEnv = hm:subE(FreshEnv,Sub), 
     lists:foldl(fun(F, AccEnv) ->
-        FunName = util:getFnName(F),
+        FunQName = util:getFnQName(F),
         %lookup type from the substituted environment
-        {T,_}  = lookup(FunName, SubdEnv, util:getLn(F)),
+        {T,_}  = lookup(FunQName, SubdEnv, util:getLn(F)),
         % generalize type wrt given environment
         PolyT   = hm:generalize(T, AccEnv, RemPs),
-        env:extend(FunName, PolyT, AccEnv)
+        env:extend(FunQName, PolyT, AccEnv)
     end, Env, Functions).
 
     
@@ -111,7 +112,7 @@ infer (Env,Node) ->
             {T, [], Ps};
         application ->
             {call,L,F,Args} = Node,
-            {T1,Cs1,Ps1} = infer(Env, F),   
+            {T1,Cs1,Ps1} = inferFn(Env,F,length(Args)),   
             {T2,Cs2,Ps2} = lists:foldl(
                 fun(X, {AccT,AccCs,AccPs}) -> 
                     {T,Cs,Ps} = infer(Env,X),
@@ -132,10 +133,12 @@ infer (Env,Node) ->
             case X of
                 B when (B == true) or (B == false) -> 
                         {hm:bt(boolean,L),[],[]};
-                _ ->    {T, Ps} = lookup(X,Env,L), {T,[],Ps}
+                _ ->    {hm:bt(atom,L),[],[]}
             end;
-            
-        _ -> io:fwrite("INTERNAL: NOT implemented: ~p~n",[Node])
+        implicit_fun ->
+            {'fun',L,{function,X,ArgLen}} = Node,
+            {T, Ps} = lookup({X,ArgLen},Env,L), {T,[],Ps};
+        _ -> erlang:error({type_error," Cannot infer type of " ++ util:to_string(Node)})
     end.
 
 -spec checkExpr(hm:env(), erl_syntax:syntaxTree()) -> {hm:env(),[hm:constraint()],[hm:predicate()]}.
@@ -153,6 +156,7 @@ checkExpr(Env,ExprNode) ->
     {_,Constraints,Ps} = infer(Env, ExprNode),
     {Env,Constraints,Ps}.
 
+% infer the types of patterns in arguments of function definition
 -spec inferPatterns(hm:env(),[erl_syntax:syntaxTree()]) -> {[hm:types()],hm:env(),[hm:constraint()],[hm:predicate()]}.
 inferPatterns(Env,ClausePatterns) ->
     lists:foldr(
@@ -168,6 +172,14 @@ inferPatterns(Env,ClausePatterns) ->
                     {[InfT | AccTs], AccEnv, InfCs ++ AccCs, InfPs ++ AccPs}
             end
         end, {[],Env,[],[]} ,ClausePatterns).
+
+% infer the type of expression on the left of an application
+-spec inferFn(hm:env(),erl_syntax:syntaxTree(),integer()) -> {hm:type(),[hm:constraint()],[hm:predicate()]}.
+inferFn(Env,{atom,L,X},ArgLen) ->
+    {T, Ps} = lookup({X,ArgLen},Env,L), {T,[],Ps};
+inferFn(Env,{var,L,X},_) ->
+    infer(Env,{var,L,X}).
+
 %%%%%%%%%%%%%%%%%% Utilities
 
 % "pseudo unify" which returns constraints
