@@ -6,4 +6,6 @@
 
 foo(X,Y) -> X + Y.
 
-bar() -> X = fun foo/2, X(1,2) div 3.
+bar() -> X = fun foo/2, X(1,2) div foo(1,2).
+
+bar2() -> X = fun bar/0, X().
