@@ -1,6 +1,6 @@
 -module(hm).
 -export([solve/1,prettyCs/2,prettify/2,emptySub/0,subT/2,freshen/1,generalize/3]).
--export([bt/2,funt/3,tvar/2,forall/4,pretty/1,subE/2,subPs/2,solvePreds/2,fresh/1]).
+-export([bt/2,funt/3,tvar/2,tcon/3,forall/4,pretty/1,subE/2,subPs/2,solvePreds/2,fresh/1]).
 -export_type([constraint/0,env/0,type/0]).
 
 
@@ -19,11 +19,13 @@
     {bt, integer(), type()}
     | {funt, integer(), [type()], type()} 
     | {tvar, integer(), type()}
+    | {tcon, integer(), string(),[type()]}
     | {forall, type(), [predicate()], type()}.
 
 bt (A,L)          -> {bt, L, A}.
 funt (A,B,L)      -> {funt, L, A, B}.
 tvar (A,L)        -> {tvar, L, A}.
+tcon(N,L,A)       -> {tcon, L, N, A}.
 forall (X,P,A,L)  -> {forall, tvar(X,L), P, A}.
 
 %%%%%%%%%%%% Constraint solver
@@ -71,6 +73,15 @@ unify ({tvar,L,V},T) ->
     end;
 unify (T,{tvar,L,V}) ->
     unify ({tvar,L,V},T);
+unify({tcon,L1,N1,As1},{tcon,L2,N2,As2}) ->
+    case N1 == N2 of
+        true        -> unifyMany(As1,As2);
+        false       -> erlang:error({type_error,
+                        "Cannot unify "++ util:to_string(N1) 
+                        ++ " (on line "++ util:to_string(L1) ++")"
+                        ++" with " ++ util:to_string(N1) 
+                        ++ " (on line "++ util:to_string(L2) ++")"})
+    end;
 unify (T,U) ->
     Eq = eqType(T,U),
     if
@@ -84,12 +95,19 @@ unify (T,U) ->
 eqType({bt,_,A}, {bt,_,B}) -> A == B;
 eqType({tvar,_,X}, {tvar,_,Y}) -> X == Y;
 eqType({funt,_,As1, B1}, {funt,_,As2, B2}) ->
-    EqLenArgs = length(As1) == (As2),
+    EqLenArgs = length(As1) == length(As2),
     case EqLenArgs of
         true -> lists:all(
                     fun(T1,T2) -> eqType(T1,T2) end
                     , lists:zip(As1,As2)) 
                 and B1 == B2;
+        false -> false
+    end;
+eqType({tcon,_,N1,As1},{tcon,_,N2,As2}) ->
+    case (N1 == N2) and (length(As1) == length(As2)) of
+        true -> lists:all(
+                    fun(T1,T2) -> eqType(T1,T2) end
+                    , lists:zip(As1,As2));
         false -> false
     end;
 eqType(_,_) -> false.
@@ -118,8 +136,10 @@ subT ({tvar, L, X}, Sub)  ->
     end;
 subT ({bt, L, T}, _)  ->
     {bt, L, T};
-subT ({funt, L, As, B},Sub)   ->
+subT ({funt, L, As, B}, Sub)   ->
     {funt, L, lists:map(fun(A) -> subT (A,Sub) end, As), subT(B,Sub)};
+subT ({tcon, L, N, As}, Sub)   ->
+    {tcon, L, N, lists:map(fun(A) -> subT (A,Sub) end, As)};
 subT ({forall, {tvar, L, X}, Ps, A}, Sub)   ->
     case maps:is_key(X,Sub) of
         true    ->  {forall, {tvar, L, X}, subPs(Ps,Sub) ,subT(A,maps:remove(X,Sub))};  % avoids name capture!
@@ -138,7 +158,6 @@ subP ({C,T},S) -> {C,subT(T,S)}.
 -spec subPs([predicate()], sub()) -> predicate().
 subPs (Ps,S) -> lists:map(fun(P) -> subP(P,S) end, Ps).
 
-
 % Repetitive substution on a environment
 -spec subE(env(), sub()) -> env().
 subE (Env,S) -> env:mapV(fun(T) -> subT(T,S) end, Env).
@@ -149,7 +168,9 @@ occurs (V,{funt, _, As, B}) ->
 occurs (_,{bt,_,_}) ->
     false;
 occurs (V,{tvar,_, X}) ->
-    V == X.
+    V == X;
+occurs (V,{tcon,_,_,As}) ->
+    lists:any(fun(A) -> occurs(V,A) end, As).
 
 % All free type variables in the given type
 -spec free(type()) -> set:set(tvar()).
@@ -161,6 +182,10 @@ free ({funt, _, As, B})     ->
             , sets:new(), As)
         , free (B));
 free ({tvar, _, A})        -> sets:add_element(A,sets:new());
+free ({tcon, _, _, As})    -> 
+    lists:foldr(
+        fun(A, AccSet) -> sets:union(free(A),AccSet) end
+    , sets:new(), As);
 free ({forall, {tvar, _, X}, _, A}) 
                         -> sets:del_element(X, free(A)).
 
@@ -264,6 +289,12 @@ prettify(Env, {tvar, _, A}) ->
             io:fwrite("~c", [X]),
             Env
     end;
+prettify(Env, {tcon, _, N, As}) ->
+    io:fwrite("~s ", [N]),
+    util:interFoldEffect(
+        fun(A,E) -> prettify(E,A) end
+        , fun() -> io:fwrite(" ") end
+        , Env, As);
 prettify(Env,{forall, T, Ps, A}) ->
     io:fwrite("∀",[]),
     Env_ = prettify(Env, T),

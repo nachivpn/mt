@@ -138,7 +138,20 @@ infer (Env,Node) ->
         implicit_fun ->
             {'fun',L,{function,X,ArgLen}} = Node,
             {T, Ps} = lookup({X,ArgLen},Env,L), {T,[],Ps};
-        _ -> erlang:error({type_error," Cannot infer type of " ++ util:to_string(Node)})
+        nil ->
+            {nil,L} = Node,
+            {hm:tcon("List",L,[hm:fresh(L)]),[],[]};
+        list -> 
+            {cons,L,H,T} = Node,
+            {HType,HCs,HPs} = infer(Env, H),
+            {TType,TCs,TPs} = infer(Env, T),
+            case TType of
+                 {tcon, _, "List", [A]}  -> {TType, HCs ++ TCs ++ unify(HType,A) , HPs ++ TPs};
+                 _                      -> erlang:error({type_error,
+                    " Tail must be a list type on line "++ util:to_string(L)})
+            end;
+        X -> erlang:error({type_error," Cannot infer type of " 
+            ++ util:to_string(Node) ++ " with node type "++ util:to_string(X)})
     end.
 
 -spec checkExpr(hm:env(), erl_syntax:syntaxTree()) -> {hm:env(),[hm:constraint()],[hm:predicate()]}.
