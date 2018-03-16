@@ -79,7 +79,7 @@ unify({tcon,L1,N1,As1},{tcon,L2,N2,As2}) ->
         false       -> erlang:error({type_error,
                         "Cannot unify "++ util:to_string(N1) 
                         ++ " (on line "++ util:to_string(L1) ++")"
-                        ++" with " ++ util:to_string(N1) 
+                        ++" with " ++ util:to_string(N2) 
                         ++ " (on line "++ util:to_string(L2) ++")"})
     end;
 unify (T,U) ->

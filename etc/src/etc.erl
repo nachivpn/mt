@@ -145,11 +145,25 @@ infer (Env,Node) ->
             {cons,L,H,T} = Node,
             {HType,HCs,HPs} = infer(Env, H),
             {TType,TCs,TPs} = infer(Env, T),
-            case TType of
-                 {tcon, _, "List", [A]}  -> {TType, HCs ++ TCs ++ unify(HType,A) , HPs ++ TPs};
-                 _                      -> erlang:error({type_error,
-                    " Tail must be a list type on line "++ util:to_string(L)})
-            end;
+            % generate a fresh "List V"
+            V = hm:fresh(L), 
+            LType = {tcon, L, "List", [V]},
+            {LType, HCs ++ TCs ++ 
+                unify(HType,V) ++   % unify head type with "V" 
+                unify(TType,LType)  % unify tail type with "List V"
+            , HPs ++ TPs};
+        tuple ->
+            {tuple,L,Es} = Node,
+            {Ts,Cs,Ps} = lists:foldl(
+                fun(X, {AccT,AccCs,AccPs}) -> 
+                    {T,Cs,Ps} = infer(Env,X),
+                    {AccT ++ [T], AccCs ++ Cs, AccPs ++ Ps}
+                end
+                , {[],[],[]}, Es),
+            {hm:tcon("Tuple",L,Ts),Cs,Ps};
+        underscore ->
+            {var,L,'_'} = Node,
+            {hm:fresh(L),[],[]};
         X -> erlang:error({type_error," Cannot infer type of " 
             ++ util:to_string(Node) ++ " with node type "++ util:to_string(X)})
     end.
@@ -165,6 +179,15 @@ checkExpr(Env,{var,L,X}) ->
         true    -> {Env,[],[]};
         false   -> {env:extend(X,hm:fresh(L),Env), [],[]}
     end;
+checkExpr(Env,{tuple,_,Es}) ->
+    lists:foldl(fun(E, {AccEnv,AccCs,AccPs}) ->
+        {ChEnv,ChCs,ChPs} = checkExpr(AccEnv,E),
+        {AccEnv ++ ChEnv, AccCs ++ ChCs, AccPs ++ ChPs}
+    end, {Env,[],[]}, Es);
+checkExpr(Env,{cons,_,H,T}) ->
+    {Env_,HCs,HPs} = checkExpr(Env,H),
+    {Env__,TCs,TPs} = checkExpr(Env_,T),
+    {Env__,HCs ++ TCs, HPs ++ TPs};
 checkExpr(Env,ExprNode) -> 
     {_,Constraints,Ps} = infer(Env, ExprNode),
     {Env,Constraints,Ps}.
@@ -172,18 +195,12 @@ checkExpr(Env,ExprNode) ->
 % infer the types of patterns in arguments of function definition
 -spec inferPatterns(hm:env(),[erl_syntax:syntaxTree()]) -> {[hm:types()],hm:env(),[hm:constraint()],[hm:predicate()]}.
 inferPatterns(Env,ClausePatterns) ->
-    lists:foldr(
+    lists:foldl(
         fun(Pattern,{AccTs,AccEnv,AccCs,AccPs}) ->
-            case Pattern of
-                {var, L, X} -> 
-                    FreshT = hm:fresh(L),
-                    AccEnv_ = env:extend(X,FreshT,AccEnv),
-                    {[FreshT | AccTs], AccEnv_, AccCs, AccPs};
-                _ ->
-                    %empty env is used for inference because?
-                    {InfT, InfCs, InfPs} = infer(env:empty(),Pattern),
-                    {[InfT | AccTs], AccEnv, InfCs ++ AccCs, InfPs ++ AccPs}
-            end
+            % checkExpr takes care of extending the env w/ variables in a pattern
+            {Env_, ChCs, ChPs} = checkExpr(AccEnv,Pattern),
+            {InfT, InfCs, InfPs} = infer(Env_,Pattern),
+            {AccTs ++ [InfT], Env_, AccCs ++ ChCs ++ InfCs, AccPs ++ ChPs ++ InfPs }
         end, {[],Env,[],[]} ,ClausePatterns).
 
 % infer the type of expression on the left of an application
