@@ -1,6 +1,7 @@
 -module(hm).
 -export([solve/1,prettyCs/2,prettify/2,emptySub/0,subT/2,freshen/1,generalize/3]).
 -export([bt/2,funt/3,tvar/2,tcon/3,forall/4,pretty/1,subE/2,subPs/2,solvePreds/2,fresh/1]).
+-export([getLn/1]).
 -export_type([constraint/0,env/0,type/0]).
 
 
@@ -114,6 +115,13 @@ eqType(_,_) -> false.
 
 %%%%%%%%%%%% Utilities
 
+-spec getLn(type()) -> integer().
+getLn ({bt, L, _})          -> L;
+getLn ({funt, L, _, _})     -> L;
+getLn ({tvar, L, _})        -> L;
+getLn ({tcon, L, _, _})    -> L;
+getLn ({forall, {tvar, L, _}, _, _}) -> L.
+
 -spec fresh(integer()) -> type().
 fresh(L) -> tvar(make_ref(),L).
 
@@ -210,7 +218,7 @@ generalize (Type,Env,Ps) ->
 % TODO: These 0s must be appropriate line numbers of type variables
 -spec bindGVs([tvar()],type(),[predicate()]) -> type().
 bindGVs ([],T,_)      -> T;
-bindGVs ([X|Xs],T,Ps)  -> {forall, {tvar,0, X}, filterPreds(Ps,{tvar,0,X}), bindGVs(Xs,T,Ps)}.
+bindGVs ([X|Xs],T,Ps)  -> {forall, {tvar,getLn(T), X}, filterPreds(Ps,{tvar,getLn(T),X}), bindGVs(Xs,T,Ps)}.
 
 -spec bound(type()) -> [{tvar(),integer()}].
 bound ({forall, {tvar,L,X},_, A}) -> [{X,L} | bound(A)];

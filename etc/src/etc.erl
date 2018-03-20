@@ -190,6 +190,31 @@ infer (Env,Node) ->
                         end, {[],[],[]}, Es),
                     {hm:tcon("Tuple",Ts,L),Cs,Ps}
             end;
+        if_expr -> 
+            {'if',L,Clauses} = Node,
+            {Ts, Cs, Ps} = lists:foldr(fun(Clause,{AccTs, AccCs,AccPs}) ->
+                % Check that guards are all boolean
+                ClauseGaurds = clause_guard(Clause),
+                {CsGaurds, PsGaurds} = checkGaurds(Env,ClauseGaurds),
+                % Type check the body, and return type of last expr in body
+                Body = clause_body(Clause),
+                {Env_, CsBody, PsBody} = lists:foldl(
+                    fun(Expr, {Ei,Csi,Psi}) -> 
+                        {Ei_,Csi_,Psi_} = checkExpr(Ei,Expr),
+                        {Ei_, Csi ++ Csi_, Psi ++ Psi_}
+                    end, {Env,[],[]}, lists:droplast(Body)),
+                {TLast, CsLast, PsLast} = infer(Env_, lists:last(Body)),
+                {[TLast | AccTs], CsGaurds ++ CsBody ++ CsLast ++ AccCs, PsBody ++ PsGaurds ++ PsLast ++ AccPs}
+            end, {[],[],[]}, Clauses),
+            {lists:last(Ts),Cs ++ unify(Ts),Ps};
+        match_expr -> 
+            {match,_,LNode,RNode} = Node,
+            {Env_, Cons1, Ps} = checkExpr(Env,LNode),
+            {LType, Cons2, PsL} = infer(Env_,LNode),
+            {RType, Cons3, PsR} = infer(Env,RNode),
+            { RType
+            , Cons1 ++ Cons2 ++ Cons3 ++ unify(LType,RType)
+            , Ps ++ PsL ++ PsR};
         underscore ->
             {var,L,'_'} = Node,
             {hm:fresh(L),[],[]};
@@ -202,7 +227,9 @@ checkExpr(Env,{match,_,LNode,RNode}) ->
     {Env_, Cons1, Ps} = checkExpr(Env,LNode),
     {LType, Cons2, PsL} = infer(Env_,LNode),
     {RType, Cons3, PsR} = infer(Env,RNode),
-    {Env_, Cons1 ++ Cons2 ++ Cons3 ++ [{LType,RType}], Ps ++ PsL ++ PsR};
+    { Env_
+    , Cons1 ++ Cons2 ++ Cons3 ++ unify(LType,RType)
+    , Ps ++ PsL ++ PsR};
 checkExpr(Env,{var,L,X}) ->
     case env:is_bound(X,Env) of
         true    -> {Env,[],[]};
@@ -244,7 +271,7 @@ checkGaurds(Env,{tree,disjunction,_,Conjuctions}) ->
     lists:foldr(fun({tree,conjunction,_,Exprs}, {DAccCs, DAccPs}) ->
         {Cs,Ps} = lists:foldr(fun(Expr,{CAccCs,CAccPs}) -> 
             {InfT,InfCs,InfPs} = infer(Env,Expr),
-            {unify(InfT,hm:bt(boolean,0)) ++ InfCs ++ CAccCs, InfPs ++ CAccPs} 
+            {unify(InfT,hm:bt(boolean,hm:getLn(InfT))) ++ InfCs ++ CAccCs, InfPs ++ CAccPs} 
         end, {[],[]}, Exprs),
         {Cs ++ DAccCs, Ps ++ DAccPs}
    end, {[],[]}, Conjuctions);
