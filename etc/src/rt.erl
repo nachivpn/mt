@@ -38,5 +38,13 @@ defaultEnv() ->
         {'>=', hm:funt([hm:tvar(a,-1),hm:tvar(b,-2)],hm:bt(boolean,0),0)},
         {'>', hm:funt([hm:tvar(a,-1),hm:tvar(b,-2)],hm:bt(boolean,0),0)},
         {'=:=', hm:funt([hm:tvar(a,-1),hm:tvar(b,-2)],hm:bt(boolean,0),0)},
-        {'=/=', hm:funt([hm:tvar(a,-1),hm:tvar(b,-2)],hm:bt(boolean,0),0)}
+        {'=/=', hm:funt([hm:tvar(a,-1),hm:tvar(b,-2)],hm:bt(boolean,0),0)},
+        {'++', hm:forall(a,[{"Num", hm:tvar(a,0)}],
+                hm:funt([hm:tcon("List",[hm:tvar(a,0)],-1),
+                        hm:tcon("List",[hm:tvar(a,0)],-2)],
+                        hm:tcon("List",[hm:tvar(a,0)],0),0),0)},
+        {'--', hm:forall(a,[{"Num", hm:tvar(a,0)}],
+                hm:funt([hm:tcon("List",[hm:tvar(a,0)],-1),
+                        hm:tcon("List",[hm:tvar(a,0)],-2)],
+                        hm:tcon("List",[hm:tvar(a,0)],0),0),0)}
     ]).

@@ -33,3 +33,7 @@ nubSorted([]) -> [];
 nubSorted([X]) -> [X];
 nubSorted([X|[X|Xs]]) -> nubSorted([X|Xs]);
 nubSorted([X|Xs]) -> [X | nubSorted(Xs)].
+
+find(X,[]) -> false;
+find(X,[X|Xs]) -> true;
+find(X,[_|Xs]) -> find(X,Xs).

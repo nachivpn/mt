@@ -25,7 +25,7 @@
 bt (A,L)          -> {bt, L, A}.
 funt (A,B,L)      -> {funt, L, A, B}.
 tvar (A,L)        -> {tvar, L, A}.
-tcon(N,L,A)       -> {tcon, L, N, A}.
+tcon(N,A,L)       -> {tcon, L, N, A}.
 forall (X,P,A,L)  -> {forall, tvar(X,L), P, A}.
 
 %%%%%%%%%%%% Constraint solver

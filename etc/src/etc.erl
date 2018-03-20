@@ -15,20 +15,32 @@
 -type expr() :: var() | {op,lno(),atom(),expr(),expr()}.
 
 parse_transform(Forms,_) ->
+    % get all user define data types (UDTs) 
+    UDTs = lists:filter(fun (Node) -> 
+            (type(Node) == 'attribute') andalso
+            (element(3,Node) == 'type')
+    end, Forms),
+    % add UDTs to default env
+    Env = lists:foldl(fun(UDT,AccEnv) -> 
+        addUDTNode(UDT,AccEnv) 
+    end, rt:defaultEnv(), UDTs),
+    % get all functions
     Functions = lists:filter(
-        fun (Node) -> element(1, Node) == function end, Forms),
+        fun (Node) -> type(Node) == function end, Forms),
+    % make strongly connected components (SCCs) (sorted in topological ordering)
     SCCs = da:mkSCCs(Functions),
+    % type check each SCC and exend Env
     try
         lists:foldl(fun(SCC, AccEnv) ->
                typeCheckSCC(SCC,AccEnv)
-        end, rt:defaultEnv(), SCCs)
+        end, Env, SCCs)
     of  
-        Env -> 
+        Env_ -> 
             lists:map(fun({X,T}) -> 
                 io:fwrite("~p :: ",[X]), 
                 hm:pretty(T), 
                 io:fwrite("~n",[])
-            end, lists:reverse(Env))
+            end, lists:reverse(Env_))
     catch
         error:{type_error,Reason} -> erlang:error("Type Error: " ++ Reason)
     end,
@@ -140,7 +152,7 @@ infer (Env,Node) ->
             {T, Ps} = lookup({X,ArgLen},Env,L), {T,[],Ps};
         nil ->
             {nil,L} = Node,
-            {hm:tcon("List",L,[hm:fresh(L)]),[],[]};
+            {hm:tcon("List",[hm:fresh(L)],L),[],[]};
         list -> 
             {cons,L,H,T} = Node,
             {HType,HCs,HPs} = infer(Env, H),
@@ -154,13 +166,29 @@ infer (Env,Node) ->
             , HPs ++ TPs};
         tuple ->
             {tuple,L,Es} = Node,
-            {Ts,Cs,Ps} = lists:foldl(
-                fun(X, {AccT,AccCs,AccPs}) -> 
-                    {T,Cs,Ps} = infer(Env,X),
-                    {AccT ++ [T], AccCs ++ Cs, AccPs ++ Ps}
-                end
-                , {[],[],[]}, Es),
-            {hm:tcon("Tuple",L,Ts),Cs,Ps};
+            [HeadEl|TailEls] = Es,
+            case type(HeadEl) of
+                % if first element of tuple is an atom,
+                atom        ->
+                    % then consider it as a constructor
+                    {atom,L,Constructor} = HeadEl,
+                    % and the tail as arguments to constructor
+                    Args = TailEls,
+                    {ConstrType,ConstrPs}   = lookup(Constructor,Env,L),
+                    {ArgTypes,ArgCs,ArgPs}  = lists:foldl(fun(X, {AccT,AccCs,AccPs}) -> 
+                        {T,Cs,Ps} = infer(Env,X),
+                        {AccT ++ [T], AccCs ++ Cs, AccPs ++ Ps}
+                    end, {[],[],[]}, Args),
+                    V = hm:fresh(L),
+                    {V, ArgCs ++ unify(ConstrType, hm:funt(ArgTypes,V,L)), ConstrPs ++ ArgPs};
+                _           ->
+                    {Ts,Cs,Ps} = lists:foldl(
+                        fun(X, {AccT,AccCs,AccPs}) -> 
+                            {T,Cs,Ps} = infer(Env,X),
+                            {AccT ++ [T], AccCs ++ Cs, AccPs ++ Ps}
+                        end, {[],[],[]}, Es),
+                    {hm:tcon("Tuple",Ts,L),Cs,Ps}
+            end;
         underscore ->
             {var,L,'_'} = Node,
             {hm:fresh(L),[],[]};
@@ -182,7 +210,7 @@ checkExpr(Env,{var,L,X}) ->
 checkExpr(Env,{tuple,_,Es}) ->
     lists:foldl(fun(E, {AccEnv,AccCs,AccPs}) ->
         {ChEnv,ChCs,ChPs} = checkExpr(AccEnv,E),
-        {AccEnv ++ ChEnv, AccCs ++ ChCs, AccPs ++ ChPs}
+        {ChEnv, AccCs ++ ChCs, AccPs ++ ChPs}
     end, {Env,[],[]}, Es);
 checkExpr(Env,{cons,_,H,T}) ->
     {Env_,HCs,HPs} = checkExpr(Env,H),
@@ -237,3 +265,35 @@ lookup(X,Env,L) ->
         undefined   -> erlang:error({type_error,util:to_string(X) ++ " not bound on line " ++ util:to_string(L)});
         T           -> hm:freshen(T)
     end.
+
+
+-spec addUDTNode(hm:env(),erl_syntax:syntaxTree()) -> hm:env().
+addUDTNode(Node,Env) ->
+    addUDT(element(4,Node),Env,util:getLn(Node)).    
+
+-spec addUDT(hm:env(),erl_syntax:syntaxTree(),integer()) -> hm:env().
+addUDT({TypeConstr,DataConstrs,Args},Env,L) ->
+    % make type constructor
+    Type = hm:tcon(TypeConstr,lists:map(fun node2type/1, Args),L),
+    % add every data constructor to Env
+    lists:foldl(fun({DConstr,DConstrType}, AccEnv) ->
+        PolyDConstrType = hm:generalize(DConstrType,Env,[]),
+        env:extend(DConstr,PolyDConstrType,AccEnv)
+    end, Env, getConstrTypes(Type, DataConstrs)). 
+
+% returns a list of Env entries - one for each data constructor
+-spec getConstrTypes(hm:type(),erl_syntax:syntaxTree()) -> [{var(),hm:type()}].
+getConstrTypes(Type,{type,L,tuple,[{atom,_,DataConstr}|Args]}) ->
+    ArgTypes = lists:map(fun node2type/1, Args),
+    [{DataConstr,hm:funt(ArgTypes,Type,L)}];
+getConstrTypes(Type,{type,_,union,DataConstrDefns}) -> 
+    lists:concat(
+        lists:map(
+            fun(DCD) -> getConstrTypes(Type,DCD) end, DataConstrDefns)).
+
+% converts a type (node) in the AST to a hm:type()
+-spec node2type(erl_syntax:syntaxTree()) -> hm:type().
+node2type({var,L,X}) -> hm:tvar(X,L);
+node2type({user_type,L,T,Args}) -> hm:tcon(T,lists:map(fun node2type/1, Args),L).
+
+
