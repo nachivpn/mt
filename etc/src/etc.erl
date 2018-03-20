@@ -107,7 +107,8 @@ infer (Env,Node) ->
             % Infer types of arguments (which are in the form of patterns)
             % Env_ is Env extended with arg variables
             {ArgTypes, Env_, CsArgs, PsArgs} = inferPatterns(Env,ClausePatterns),
-            % ClauseGaurds = clause_guard(Node),
+            ClauseGaurds = clause_guard(Node),
+            {CsGaurds, PsGaurds} = checkGaurds(Env_,ClauseGaurds),
             Body = clause_body(Node),
             {Env__, CsBody, PsBody} =lists:foldl(
                 fun(Expr, {Ei,Csi,Psi}) -> 
@@ -116,8 +117,8 @@ infer (Env,Node) ->
                 end, {Env_,[],[]}, lists:droplast(Body)),
             {ReturnType, CsLast, PsLast} = infer(Env__, lists:last(Body)),
             {hm:funt(ArgTypes,ReturnType,L)
-            , CsArgs ++ CsBody ++ CsLast 
-            , PsArgs ++ PsBody ++ PsLast};
+            , CsArgs ++ CsGaurds ++ CsBody ++ CsLast 
+            , PsArgs ++ PsGaurds ++ PsBody ++ PsLast};
         variable ->
             {var, L, X} = Node,
             {T, Ps} = lookup(X, Env, L),
@@ -237,6 +238,17 @@ inferFn(Env,{atom,L,X},ArgLen) ->
     {T, Ps} = lookup({X,ArgLen},Env,L), {T,[],Ps};
 inferFn(Env,{var,L,X},_) ->
     infer(Env,{var,L,X}).
+
+-spec checkGaurds(hm:env(),erl_syntax:syntaxTree()) -> {[hm:constraint()],[hm:predicate()]}.
+checkGaurds(Env,{tree,disjunction,_,Conjuctions}) ->
+    lists:foldr(fun({tree,conjunction,_,Exprs}, {DAccCs, DAccPs}) ->
+        {Cs,Ps} = lists:foldr(fun(Expr,{CAccCs,CAccPs}) -> 
+            {InfT,InfCs,InfPs} = infer(Env,Expr),
+            {unify(InfT,hm:bt(boolean,0)) ++ InfCs ++ CAccCs, InfPs ++ CAccPs} 
+        end, {[],[]}, Exprs),
+        {Cs ++ DAccCs, Ps ++ DAccPs}
+   end, {[],[]}, Conjuctions);
+checkGaurds(_,none) -> {[],[]}.
 
 %%%%%%%%%%%%%%%%%% Utilities
 

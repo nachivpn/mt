@@ -37,3 +37,18 @@ nubSorted([X|Xs]) -> [X | nubSorted(Xs)].
 find(X,[]) -> false;
 find(X,[X|Xs]) -> true;
 find(X,[_|Xs]) -> find(X,Xs).
+
+
+qsort([]) -> [];
+qsort([H | Xs]) -> 
+    {L, E, G} = partition(H, [H|Xs], {[], [], []}),
+    qsort(L) ++ E ++ qsort(G).
+ 
+partition(_, [], {L, E, G}) ->
+    {L, E, G};
+partition(Pivot, [H | List], {L, E, G}) when Pivot > H ->
+    partition(Pivot, List, {[H | L], E, G});
+partition(Pivot, [H | List], {L, E, G}) when Pivot < H ->
+    partition(Pivot, List, {L, E, [H | G]});
+partition(Pivot, [H | List], {L, E, G}) when Pivot == H ->
+    partition(Pivot, List, {L, [H | E], G}).
