@@ -56,6 +56,8 @@ getCallsFromExpr({'fun',_,{function,Fn,Arity}}) ->
 getCallsFromExpr(E) when is_tuple(E) ->
     Es_ = erlang:tuple_to_list(E),
     lists:concat(lists:map(fun getCallsFromExpr/1, Es_));
+getCallsFromExpr(Es) when is_list(Es) ->
+    lists:concat(lists:map(fun getCallsFromExpr/1, Es));
 getCallsFromExpr(_) -> [].
 
 -spec buildSccGraph(digraph:graph(),[[digraph:vertex()]]) -> digraph:graph().
