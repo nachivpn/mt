@@ -59,10 +59,13 @@ typeCheckSCC(Functions,Env) ->
         { unify(T, FreshT) ++ Cs ++ AccCs
         , Ps ++ AccPs}
     end, {[],[]}, Functions),
-    Sub     = hm:solve(InfCs),
-    Ps      = hm:subPs(InfPs,Sub),
-    RemPs   = hm:solvePreds(rt:defaultClasses(), Ps),
-    SubdEnv = hm:subE(FreshEnv,Sub), 
+    % Solve unification constraints
+    Sub             = hm:solve(InfCs),
+    Ps              = hm:subPs(InfPs,Sub),
+    % predicate solving leads in a substitution since 
+    % oc predicates are basically ambiguous unification constraints
+    {Sub_, RemPs}   = hm:solvePreds(rt:defaultClasses(), Ps),
+    SubdEnv = hm:subE(FreshEnv,hm:comp(Sub_,Sub)), 
     lists:foldl(fun(F, AccEnv) ->
         FunQName = util:getFnQName(F),
         %lookup type from the substituted environment
@@ -80,7 +83,7 @@ infer (Env,Node) ->
         integer -> 
             {integer,L,_} = Node,
             X = hm:fresh(L),
-            {X,[],[{"Num",X}]};
+            {X,[],[{class,"Num",X}]};
         string ->
             {string,L,_} = Node,
             {hm:bt(string,L),[],[]};
@@ -175,13 +178,13 @@ infer (Env,Node) ->
                     {atom,L,Constructor} = HeadEl,
                     % and the tail as arguments to constructor
                     Args = TailEls,
-                    {ConstrType,ConstrPs}   = lookup(Constructor,Env,L),
+                    {ConstrTypes,ConstrPs}   = lookupMulti(Constructor,Env,L),
                     {ArgTypes,ArgCs,ArgPs}  = lists:foldl(fun(X, {AccT,AccCs,AccPs}) -> 
                         {T,Cs,Ps} = infer(Env,X),
                         {AccT ++ [T], AccCs ++ Cs, AccPs ++ Ps}
                     end, {[],[],[]}, Args),
                     V = hm:fresh(L),
-                    {V, ArgCs ++ unify(ConstrType, hm:funt(ArgTypes,V,L)), ConstrPs ++ ArgPs};
+                    {V, ArgCs, [{oc,hm:funt(ArgTypes,V,L),ConstrTypes}] ++ ConstrPs ++ ArgPs};
                 _           ->
                     {Ts,Cs,Ps} = lists:foldl(
                         fun(X, {AccT,AccCs,AccPs}) -> 
@@ -236,6 +239,7 @@ checkExpr(Env,{var,L,X}) ->
         false   -> {env:extend(X,hm:fresh(L),Env), [],[]}
     end;
 checkExpr(Env,{tuple,_,Es}) ->
+    % TODO handle constructors separately!
     lists:foldl(fun(E, {AccEnv,AccCs,AccPs}) ->
         {ChEnv,ChCs,ChPs} = checkExpr(AccEnv,E),
         {ChEnv, AccCs ++ ChCs, AccPs ++ ChPs}
@@ -303,6 +307,16 @@ lookup(X,Env,L) ->
     case env:lookup(X,Env) of
         undefined   -> erlang:error({type_error,util:to_string(X) ++ " not bound on line " ++ util:to_string(L)});
         T           -> hm:freshen(T)
+    end.
+
+-spec lookupMulti(hm:tvar(),hm:env(),integer()) -> {[hm:type()],[hm:predicate()]}.
+lookupMulti(X,Env,L) ->
+    case env:lookupMulti(X,Env) of
+        []   -> erlang:error({type_error,util:to_string(X) ++ " not bound on line " ++ util:to_string(L)});
+        Ts           -> lists:foldr(fun(T,{AccTs,AccPs}) -> 
+                            {FT,FPs} = hm:freshen(T),
+                            {[FT|AccTs], FPs ++ AccPs}
+                        end, {[],[]} ,Ts)
     end.
 
 

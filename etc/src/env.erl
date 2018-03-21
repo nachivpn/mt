@@ -1,5 +1,5 @@
 -module(env).
--export([empty/0,lookup/2,extend/3,free/2,is_bound/2,mapV/2]).
+-export([empty/0,lookup/2,extend/3,free/2,is_bound/2,mapV/2,lookupMulti/2]).
 
 empty() -> [].
 
@@ -13,3 +13,5 @@ extend(X,A,Env) -> [{X,A} | Env].
 free(X,Env) -> proplists:delete(X,Env).
 
 mapV(F,Env) -> lists:map(fun ({Var,Type}) -> {Var,F(Type)} end, Env).
+
+lookupMulti(X,Env) -> proplists:get_all_values(X,Env).

@@ -1,6 +1,6 @@
 -module(hm).
 -export([solve/1,prettyCs/2,prettify/2,emptySub/0,subT/2,freshen/1,generalize/3]).
--export([bt/2,funt/3,tvar/2,tcon/3,forall/4,pretty/1,subE/2,subPs/2,solvePreds/2,fresh/1]).
+-export([bt/2,funt/3,tvar/2,tcon/3,forall/4,pretty/1,subE/2,subPs/2,solvePreds/2,fresh/1,comp/2]).
 -export([getLn/1]).
 -export_type([constraint/0,env/0,type/0]).
 
@@ -12,7 +12,7 @@
 -type constraint() :: {type(), type()}.
 
 -type class() :: string().
--type predicate() :: {class(), type()}.
+-type predicate() :: {class, class(), type()} | {oc, type(),[type()]}.
 
 %%%%%%%%%%%%% Type variable constructors
 
@@ -92,6 +92,16 @@ unify (T,U) ->
                             " with " ++ util:to_string(U)})
     end.
 
+-spec unifiable(hm:type(),hm:type()) -> boolean().
+unifiable(TypeA,TypeB) ->
+    try
+        unify(TypeA,TypeB)
+    of
+        _ -> true
+    catch
+        error:{type_error,_} -> false
+    end.
+
 -spec eqType(type(),type()) -> boolean().
 eqType({bt,_,A}, {bt,_,B}) -> A == B;
 eqType({tvar,_,X}, {tvar,_,Y}) -> X == Y;
@@ -160,7 +170,11 @@ subC ({T1,T2},S) -> {subT(T1,S),subT(T2,S)}.
 
 % Repetitive substution on a predicate
 -spec subP(predicate(), sub()) -> predicate().
-subP ({C,T},S) -> {C,subT(T,S)}.
+subP ({class,C,T},S) -> {class,C,subT(T,S)};
+subP ({oc,T,MatcingTypes},S) -> 
+    SubdMatcingTypes = lists:map(fun(MT)-> subT(MT,S) end,MatcingTypes),
+    UnifiableMatcingTypes = lists:filter(fun(MT) -> unifiable(T,MT) end,SubdMatcingTypes),
+    {oc, subT(T,S), UnifiableMatcingTypes}.
 
 % Repetitive substution on a predicate
 -spec subPs([predicate()], sub()) -> predicate().
@@ -215,10 +229,9 @@ generalize (Type,Env,Ps) ->
     bindGVs(sets:to_list(Generalizable),Type,Ps).
 
 % bind generalized variables
-% TODO: These 0s must be appropriate line numbers of type variables
 -spec bindGVs([tvar()],type(),[predicate()]) -> type().
 bindGVs ([],T,_)      -> T;
-bindGVs ([X|Xs],T,Ps)  -> {forall, {tvar,getLn(T), X}, filterPreds(Ps,{tvar,getLn(T),X}), bindGVs(Xs,T,Ps)}.
+bindGVs ([X|Xs],T,Ps)  -> {forall, {tvar,getLn(T), X}, getPreds(Ps,{tvar,getLn(T),X}), bindGVs(Xs,T,Ps)}.
 
 -spec bound(type()) -> [{tvar(),integer()}].
 bound ({forall, {tvar,L,X},_, A}) -> [{X,L} | bound(A)];
@@ -247,24 +260,49 @@ freshen (T) ->
 %% Predicate solver
 %%%%%%%%%%%%%%%%%%%%
 
--spec filterPreds([predicate()],type()) -> [predicate()].
-filterPreds(Ps,T) -> lists:filter(fun({_,X}) -> eqType(T,X) end,Ps).
+% get predicates on a certain type
+-spec getPreds([predicate()],type()) -> [predicate()].
+getPreds(Ps,T) -> 
+    lists:filter(
+    fun(P) ->
+        case P of
+            {class,_,X} -> eqType(T,X);
+            {oc,{funt,_,_,X},_}  -> eqType(T,X)
+        end
+    end,Ps).
 
-solved(Given,{C,T}) -> 
-    lists:any(fun({CX,TX})-> 
-        R = (C == CX) and eqType(T,TX),
-        R end, Given).
+% Is the truth of a predicate derivable from the premise?
+-spec solved([predicate()],predicate()) -> boolean().
+solved(Premise,{class,C,T}) -> 
+    lists:any(fun(P) ->
+        case P of
+            {class,CX,TX}  -> (C == CX) and eqType(T,TX) ;
+            _              -> false
+        end
+    end, Premise);
+solved(_,_)        -> false.
 
--spec solvePreds([predicate()],[predicate()]) -> [predicate()].
-solvePreds(Given,Ps) -> 
-    Filtered = lists:filter(fun(P) -> not solved(Given,P) end, Ps),
-    Unsolved = lists:any(
-        fun({_,X}) -> case X of {tvar,_,_} -> false; _ -> true end end, Filtered),
-    case Unsolved of
-        true -> erlang:error({type_error, "Unsolved predicates in " ++ util:to_string(Filtered)});
-        false -> Filtered
-    end.
-    
+-spec solvePreds([predicate()],[predicate()]) -> {sub(),[predicate()]}.
+solvePreds(Premise,Ps) -> 
+    % first, weed out all the predicates which are already solved 
+    Unsolved0           = lists:filter(fun(P) -> not solved(Premise,P) end, Ps),
+    % solve the oc constraints that are solvable (i.e., only one matching type)
+    {Sub,Unsolved1}     = lists:foldr(fun(P,{AccSub,AccPs}) ->
+        case P of
+            {oc,CT,[MT]}    ->  Sub = unify(subT(CT,AccSub),subT(MT,AccSub)),
+                                {comp(Sub,AccSub),AccPs};
+            _               ->  {AccSub,[P|AccPs]}
+        end
+    end, {emptySub(),[]}, Unsolved0),
+    Unsolved2           = lists:map(fun(P) ->
+        case P of
+            {class,_,{tvar,_,_}}    -> P;
+            {oc,_,_}                -> P;
+            _                       -> erlang:error({type_error, "Cannot solve predicate: " ++ util:to_string(P)}) 
+        end
+    end, subPs(Unsolved1,Sub)),
+    {Sub,Unsolved2}.
+
 
 %%%%%%%%%%%%%%%%%%%%
 %% Pretty printing
@@ -307,10 +345,21 @@ prettify(Env,{forall, T, Ps, A}) ->
     io:fwrite("∀",[]),
     Env_ = prettify(Env, T),
     io:fwrite("[",[]),
-    lists:map(fun({C,T_}) -> 
-        io:fwrite("~s ",[C]),
-        prettify(Env, T_),
-        io:fwrite(";",[])
+    lists:map(fun(P) ->
+        case P of
+            {class,C,T_} -> 
+                io:fwrite("~s ",[C]),
+                prettify(Env, T_),
+                io:fwrite(";",[]);
+            {oc,CT,MTs} ->
+                prettify(Env, CT),
+                io:fwrite(" :~~: [",[]),
+                util:interFoldEffect(
+                    fun(MT,E) -> prettify(E,MT) end
+                    ,fun() -> io:fwrite(" || ") end
+                , Env, MTs),
+                io:fwrite("]",[])
+        end
     end, Ps),
     io:fwrite("].",[]),
     prettify(Env_, A).
