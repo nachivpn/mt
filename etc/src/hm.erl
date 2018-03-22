@@ -256,10 +256,6 @@ freshen (T) ->
     { subT(StrippedT, Sub)
     , subPs(Ps,Sub)}.
 
-%%%%%%%%%%%%%%%%%%%%
-%% Predicate solver
-%%%%%%%%%%%%%%%%%%%%
-
 % get predicates on a certain type
 -spec getPreds([predicate()],type()) -> [predicate()].
 getPreds(Ps,T) -> 
@@ -271,36 +267,81 @@ getPreds(Ps,T) ->
         end
     end,Ps).
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%% Predicate solvers
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%% Class predicate solver
+
 % Is the truth of a predicate derivable from the premise?
--spec solved([predicate()],predicate()) -> boolean().
-solved(Premise,{class,C,T}) -> 
+-spec preSolved([predicate()],predicate()) -> boolean().
+preSolved(Premise,{class,C,T}) -> 
     lists:any(fun(P) ->
         case P of
             {class,CX,TX}  -> (C == CX) and eqType(T,TX) ;
             _              -> false
         end
     end, Premise);
-solved(_,_)        -> false.
+preSolved(_,_)        -> false.
+
+% solves class predicates, and returns unsolveable predicates
+% "solving" class predicates is simply weeding out all the preSolved
+-spec solveClassPs([predicate()],[predicate()]) -> ([predicate()]).
+solveClassPs(Premise,Ps) -> lists:filter(fun(P) -> not preSolved(Premise,P) end, Ps).
+
+%%%%%% Overloaded constructor (OC) predicate solver
+
+% Is a given OC predicate solveable?
+-spec solveableOcP(predicate()) -> boolean().
+solveableOcP({oc,_,[_]}) -> true;
+solveableOcP(_) -> false.
+
+% Solve an OC predicate: unify the matching type (from singleton solution set) 
+% and the constructor's type
+-spec solveOcP(predicate()) -> util:maybe(sub()).
+solveOcP({oc,CT,[MT]})   -> {just,unify(CT,MT)};
+solveOcP(_)              -> {nothing}.
+
+% takes a sub and a list of predicates
+% returns a sub (obtained by solving predicates) and a list of unsolvable predicates
+-spec solveOcPs(sub(),[predicate()]) -> {sub(),[predicate()]}.
+solveOcPs(GivenSub,GivenPs) ->
+    Solveable = lists:any(fun solveableOcP/1, GivenPs),
+    if
+        Solveable -> 
+            % fold over the given predicates by solving each (solveable) predicate 
+            % and accumulating solution and unsolved predicates
+            {Sub,Ps} = lists:foldr(fun(P,{AccSub,AccPs}) ->
+                case solveOcP(P) of 
+                    % predicate has been solved, compose resulting subst with accsub 
+                    {just, S} -> {comp(S,AccSub),AccPs};
+                    % predicate cannot be solved, add it to unsolved list
+                    {nothing} -> {AccSub, [P|AccPs]}
+                end
+            end, {GivenSub,[]}, GivenPs),
+            % this new subst may open up new solveableOcPs
+            solveOcPs(Sub,subPs(Ps,Sub));
+        % none of the predicates are solveable
+        true -> {GivenSub,GivenPs}
+    end.
+
+%%%%%% Main predicate solver
 
 -spec solvePreds([predicate()],[predicate()]) -> {sub(),[predicate()]}.
 solvePreds(Premise,Ps) -> 
-    % first, weed out all the predicates which are already solved 
-    Unsolved0           = lists:filter(fun(P) -> not solved(Premise,P) end, Ps),
-    % solve the oc constraints that are solvable (i.e., only one matching type)
-    {Sub,Unsolved1}     = lists:foldr(fun(P,{AccSub,AccPs}) ->
-        case P of
-            {oc,CT,[MT]}    ->  Sub = unify(subT(CT,AccSub),subT(MT,AccSub)),
-                                {comp(Sub,AccSub),AccPs};
-            _               ->  {AccSub,[P|AccPs]}
-        end
-    end, {emptySub(),[]}, Unsolved0),
+    % solve the oc predicates
+    {Sub, Unsolved0}    = solveOcPs(emptySub(),Ps),
+    % solve class predicates 
+    Unsolved1           = solveClassPs(Premise,Unsolved0),
+    % select unsolved predicates for generalization
     Unsolved2           = lists:map(fun(P) ->
         case P of
             {class,_,{tvar,_,_}}    -> P;
             {oc,_,_}                -> P;
             _                       -> erlang:error({type_error, "Cannot solve predicate: " ++ util:to_string(P)}) 
         end
-    end, subPs(Unsolved1,Sub)),
+    end, Unsolved1),
     {Sub,Unsolved2}.
 
 

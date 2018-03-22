@@ -1,6 +1,9 @@
 -module (util).
 -export([to_string/1,intersperse/2,interFoldEffect/4,
     pairwiseChunk/1,getFnName/1,getFnArgLen/1,getFnClauses/1,getLn/1,getFnQName/1]).
+-export_type([maybe/1]).
+
+-type maybe(A) :: {nothing} | {just,A}.
 
 to_string(X) -> lists:flatten(io_lib:format("~p",[X])).
 

@@ -29,7 +29,7 @@ parse_transform(Forms,_) ->
         fun (Node) -> type(Node) == function end, Forms),
     % make strongly connected components (SCCs) (sorted in topological ordering)
     SCCs = da:mkSCCs(Functions),
-    % type check each SCC and exend Env
+    % type check each SCC and extend Env
     try
         lists:foldl(fun(SCC, AccEnv) ->
                typeCheckSCC(SCC,AccEnv)
