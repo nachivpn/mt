@@ -172,9 +172,10 @@ subC ({T1,T2},S) -> {subT(T1,S),subT(T2,S)}.
 -spec subP(predicate(), sub()) -> predicate().
 subP ({class,C,T},S) -> {class,C,subT(T,S)};
 subP ({oc,T,MatcingTypes},S) -> 
-    SubdMatcingTypes = lists:map(fun(MT)-> subT(MT,S) end,MatcingTypes),
-    UnifiableMatcingTypes = lists:filter(fun(MT) -> unifiable(T,MT) end,SubdMatcingTypes),
-    {oc, subT(T,S), UnifiableMatcingTypes}.
+    T_ = subT(T,S),
+    MatcingTypes_ = lists:map(fun(MT)-> subT(MT,S) end,MatcingTypes),
+    UnifiableMatcingTypes = lists:filter(fun(MT_) -> unifiable(T_,MT_) end,MatcingTypes_),
+    {oc,T_, UnifiableMatcingTypes}.
 
 % Repetitive substution on a predicate
 -spec subPs([predicate()], sub()) -> predicate().
@@ -338,6 +339,7 @@ solvePreds(Premise,Ps) ->
     Unsolved2           = lists:map(fun(P) ->
         case P of
             {class,_,{tvar,_,_}}    -> P;
+            {oc,T,[]}               -> erlang:error({type_error, "No matching constructors for " ++ util:to_string(T)});
             {oc,_,_}                -> P;
             _                       -> erlang:error({type_error, "Cannot solve predicate: " ++ util:to_string(P)}) 
         end
@@ -384,26 +386,28 @@ prettify(Env, {tcon, _, N, As}) ->
         , Env, As);
 prettify(Env,{forall, T, Ps, A}) ->
     io:fwrite("∀",[]),
-    Env_ = prettify(Env, T),
+    Env1 = prettify(Env, T),
     io:fwrite("[",[]),
-    lists:map(fun(P) ->
+    Env2 = lists:foldl(fun(P, AccEnv) ->
         case P of
             {class,C,T_} -> 
                 io:fwrite("~s ",[C]),
-                prettify(Env, T_),
-                io:fwrite(";",[]);
+                AccEnv_ = prettify(AccEnv, T_),
+                io:fwrite(";",[]),
+                AccEnv_;
             {oc,CT,MTs} ->
-                prettify(Env, CT),
+                AccEnv_ = prettify(AccEnv, CT),
                 io:fwrite(" :~~: [",[]),
-                util:interFoldEffect(
-                    fun(MT,E) -> prettify(E,MT) end
+                AccEnv__ = util:interFoldEffect(
+                    fun(MT,AccE) -> prettify(AccE,MT) end
                     ,fun() -> io:fwrite(" || ") end
-                , Env, MTs),
-                io:fwrite("]",[])
+                , AccEnv_, MTs),
+                io:fwrite("]",[]),
+                AccEnv__
         end
-    end, Ps),
+    end, Env1, Ps),
     io:fwrite("].",[]),
-    prettify(Env_, A).
+    prettify(Env2, A).
 
 prettyCs([], S) -> S;
 prettyCs([{T1,T2}|Cs],S) -> 
