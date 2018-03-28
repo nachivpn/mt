@@ -329,6 +329,7 @@ solveableOcP(_) -> false.
 solveOcP({oc,CT,[MT]})   -> {just,unify(CT,MT)};
 solveOcP(_)              -> {nothing}.
 
+% returns the same number of predicates, only reduces oc pred size
 -spec reduceOcPs([predicate()]) -> [predicate()].
 reduceOcPs(Ps) ->
     lists:map(fun(P) ->
@@ -349,15 +350,18 @@ solveOcPs(GivenSub,GivenPs) ->
             % fold over the reduced predicates by solving each (solveable) predicate 
             % and accumulating solution and unsolved predicates
             {Sub,Ps} = lists:foldr(fun(P,{AccSub,AccPs}) ->
-                case solveOcP(P) of 
-                    % predicate has been solved, compose resulting subst with accsub 
-                    {just, S} -> {comp(S,AccSub),AccPs};
+                % apply accumulated information on predicate to be solved (this may make it un/solvable)
+                P_ = subP(P,AccSub),
+                case solveOcP(P_) of 
+                    % predicate has been solved, 
+                    % accumulate subst & apply to accumulated predicates
+                    {just, S} -> {comp(S,AccSub),subPs(AccPs,S)};
                     % predicate cannot be solved, add it to unsolved list
-                    {nothing} -> {AccSub, [P|AccPs]}
+                    {nothing} -> {AccSub, [P_|AccPs]}
                 end
             end, {GivenSub,[]}, Reduced),
             % this new subst may open up new solveableOcPs
-            solveOcPs(Sub,subPs(Ps,Sub));
+            solveOcPs(Sub,Ps);
         % none of the predicates are solveable
         true -> {GivenSub,Reduced}
     end.
