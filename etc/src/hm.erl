@@ -21,7 +21,8 @@
     | {funt, integer(), [type()], type()} 
     | {tvar, integer(), type()}
     | {tcon, integer(), string(),[type()]}
-    | {forall, type(), [predicate()], type()}.
+    | {forall, type(), [predicate()], type()}
+    | {whilst, [predicate()], type()}.
 
 bt (A,L)          -> {bt, L, A}.
 funt (A,B,L)      -> {funt, L, A, B}.
@@ -130,7 +131,9 @@ getLn ({bt, L, _})          -> L;
 getLn ({funt, L, _, _})     -> L;
 getLn ({tvar, L, _})        -> L;
 getLn ({tcon, L, _, _})    -> L;
-getLn ({forall, {tvar, L, _}, _, _}) -> L.
+getLn ({forall, {tvar, L, _}, _, _}) -> L;
+getLn ({whilst, _, T}) -> getLn(T).
+
 
 -spec fresh(integer()) -> type().
 fresh(L) -> tvar(make_ref(),L).
@@ -162,7 +165,8 @@ subT ({forall, {tvar, L, X}, Ps, A}, Sub)   ->
     case maps:is_key(X,Sub) of
         true    ->  {forall, {tvar, L, X}, subPs(Ps,Sub) ,subT(A,maps:remove(X,Sub))};  % avoids name capture!
         false   ->  {forall, {tvar, L, X}, subPs(Ps,Sub) ,subT(A,Sub)}
-    end.
+    end;
+subT ({whilst,Ps,T},Sub) -> {whilst,subPs(Ps,Sub),subT(T,Sub)}.
 
 % Repetitive substution on a constraint
 -spec subC(constraint(), sub()) -> constraint().
@@ -172,10 +176,7 @@ subC ({T1,T2},S) -> {subT(T1,S),subT(T2,S)}.
 -spec subP(predicate(), sub()) -> predicate().
 subP ({class,C,T},S) -> {class,C,subT(T,S)};
 subP ({oc,T,MatcingTypes},S) -> 
-    T_ = subT(T,S),
-    MatcingTypes_ = lists:map(fun(MT)-> subT(MT,S) end,MatcingTypes),
-    UnifiableMatcingTypes = lists:filter(fun(MT_) -> unifiable(T_,MT_) end,MatcingTypes_),
-    {oc,T_, UnifiableMatcingTypes}.
+    {oc, subT(T,S), lists:map(fun(MT)-> subT(MT,S) end, MatcingTypes)}.
 
 % Repetitive substution on a predicate
 -spec subPs([predicate()], sub()) -> predicate().
@@ -210,7 +211,8 @@ free ({tcon, _, _, As})    ->
         fun(A, AccSet) -> sets:union(free(A),AccSet) end
     , sets:new(), As);
 free ({forall, {tvar, _, X}, _, A}) 
-                        -> sets:del_element(X, free(A)).
+                        -> sets:del_element(X, free(A));
+free ({whilst,_,T})         -> free(T).
 
 -spec freeInEnv(env()) -> set:set(tvar()).
 freeInEnv (VTs) ->
@@ -219,20 +221,33 @@ freeInEnv (VTs) ->
             sets:new(),
             lists:map(fun({_,T}) -> free(T) end, VTs)).
 
+-spec freeInPs([predicate()]) -> set:set(tvar()).
+freeInPs(Ps) ->
+    lists:foldl(fun(P,AccFree)-> 
+            case P of 
+                {oc,CT,MTs}   -> 
+                    Free = lists:foldl(fun(MT,AccFree_) -> 
+                        sets:union(AccFree_,free(MT))
+                    end, free(CT), MTs),
+                    sets:union(AccFree,Free);
+                {class,_,T}   -> sets:union(AccFree,free(T))
+            end
+        end, sets:new(), Ps).
+
 % converts a mono type to a poly type
 -spec generalize(type(),env(),[predicate()]) -> type().
 generalize (Type,Env,Ps) ->
-    Mono = free (Type),
+    MonoVars = sets:union(free(Type),freeInPs(Ps)),
     BoundInEnv = freeInEnv(Env),
     % Generalizable variables of a type are
     % monotype variables that are not bound in environment
-    Generalizable = sets:subtract(Mono, BoundInEnv),
+    Generalizable = sets:subtract(MonoVars, BoundInEnv),
     bindGVs(sets:to_list(Generalizable),Type,Ps).
 
 % bind generalized variables
 -spec bindGVs([tvar()],type(),[predicate()]) -> type().
-bindGVs ([],T,_)      -> T;
-bindGVs ([X|Xs],T,Ps)  -> {forall, {tvar,getLn(T), X}, getPreds(Ps,{tvar,getLn(T),X}), bindGVs(Xs,T,Ps)}.
+bindGVs ([],T,Ps)      -> {whilst, getUniPreds(Ps),T};
+bindGVs ([X|Xs],T,Ps)  -> {forall, {tvar,getLn(T), X}, getClassPredsOn(Ps,{tvar,getLn(T),X}), bindGVs(Xs,T,Ps)}.
 
 -spec bound(type()) -> [{tvar(),integer()}].
 bound ({forall, {tvar,L,X},_, A}) -> [{X,L} | bound(A)];
@@ -242,6 +257,7 @@ bound (_) -> [].
 stripbound ({forall, {tvar, _,_}, Ps, A}) -> 
     {T,Ps_} = stripbound(A),
     {T,Ps ++ Ps_};
+stripbound ({whilst,UPs,T}) -> {T,UPs};
 stripbound (T) -> {T,[]}.
 
 % replace all bound variables with fresh variables
@@ -258,13 +274,22 @@ freshen (T) ->
     , subPs(Ps,Sub)}.
 
 % get predicates on a certain type
--spec getPreds([predicate()],type()) -> [predicate()].
-getPreds(Ps,T) -> 
-    lists:filter(
-    fun(P) ->
+-spec getClassPredsOn([predicate()],type()) -> [predicate()].
+getClassPredsOn(Ps,T) -> 
+    lists:filter(fun(P) ->
         case P of
             {class,_,X} -> eqType(T,X);
-            {oc,{funt,_,_,X},_}  -> eqType(T,X)
+            _           -> false
+        end
+    end,Ps).
+
+% get all unification predicates
+-spec getUniPreds([predicate()]) -> [predicate()].
+getUniPreds(Ps) -> 
+    lists:filter(fun(P) ->
+        case P of
+            {oc,_,_} -> true;
+            _           -> false
         end
     end,Ps).
 
@@ -304,14 +329,24 @@ solveableOcP(_) -> false.
 solveOcP({oc,CT,[MT]})   -> {just,unify(CT,MT)};
 solveOcP(_)              -> {nothing}.
 
+-spec reduceOcPs([predicate()]) -> [predicate()].
+reduceOcPs(Ps) ->
+    lists:map(fun(P) ->
+         case P of 
+            {oc,CT,MTs}     -> {oc,CT,lists:filter(fun(MT) -> unifiable(CT,MT) end,MTs)};
+            T               -> T
+        end
+    end, Ps).
+
 % takes a sub and a list of predicates
 % returns a sub (obtained by solving predicates) and a list of unsolvable predicates
 -spec solveOcPs(sub(),[predicate()]) -> {sub(),[predicate()]}.
 solveOcPs(GivenSub,GivenPs) ->
-    Solveable = lists:any(fun solveableOcP/1, GivenPs),
+    Reduced = reduceOcPs(GivenPs),
+    Solveable = lists:any(fun solveableOcP/1, Reduced),
     if
         Solveable -> 
-            % fold over the given predicates by solving each (solveable) predicate 
+            % fold over the reduced predicates by solving each (solveable) predicate 
             % and accumulating solution and unsolved predicates
             {Sub,Ps} = lists:foldr(fun(P,{AccSub,AccPs}) ->
                 case solveOcP(P) of 
@@ -320,11 +355,11 @@ solveOcPs(GivenSub,GivenPs) ->
                     % predicate cannot be solved, add it to unsolved list
                     {nothing} -> {AccSub, [P|AccPs]}
                 end
-            end, {GivenSub,[]}, GivenPs),
+            end, {GivenSub,[]}, Reduced),
             % this new subst may open up new solveableOcPs
             solveOcPs(Sub,subPs(Ps,Sub));
         % none of the predicates are solveable
-        true -> {GivenSub,GivenPs}
+        true -> {GivenSub,Reduced}
     end.
 
 %%%%%% Main predicate solver
@@ -394,20 +429,27 @@ prettify(Env,{forall, T, Ps, A}) ->
                 io:fwrite("~s ",[C]),
                 AccEnv_ = prettify(AccEnv, T_),
                 io:fwrite(";",[]),
-                AccEnv_;
+                AccEnv_
+        end
+    end, Env1, Ps),
+    io:fwrite("].",[]),
+    prettify(Env2, A);
+prettify(Env,{whilst,Ps,A}) ->
+    Env1 = lists:foldl(fun(P, AccEnv) ->
+        case P of
             {oc,CT,MTs} ->
                 AccEnv_ = prettify(AccEnv, CT),
-                io:fwrite(" :~~: [",[]),
+                io:fwrite(" :~~: {",[]),
                 AccEnv__ = util:interFoldEffect(
                     fun(MT,AccE) -> prettify(AccE,MT) end
                     ,fun() -> io:fwrite(" || ") end
                 , AccEnv_, MTs),
-                io:fwrite("]",[]),
+                io:fwrite("} ",[]),
                 AccEnv__
         end
-    end, Env1, Ps),
-    io:fwrite("].",[]),
-    prettify(Env2, A).
+    end, Env, Ps),
+    prettify(Env1, A).
+
 
 prettyCs([], S) -> S;
 prettyCs([{T1,T2}|Cs],S) -> 
