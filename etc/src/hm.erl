@@ -59,8 +59,10 @@ unifyMany ([A|As],[B|Bs])   ->
     Bs_ = lists:map(fun(T) -> subT(T,Sub) end, Bs),
     comp(unifyMany(As_,Bs_),Sub).
 
+% unify is left biased (this is a crucial property relied upon!)
+% i.e., unify(T1,T2) returns substitution for T1 in terms of T2
 -spec unify(type(), type()) -> sub().
-unify ({funt,_,As1, B1}, {funt,_,As2, B2}) -> 
+unify ({funt,_,As1, B1}, {funt,_,As2, B2}) ->
     X = unifyMany (As1, As2),
     Y = unify (subT(B1, X),subT(B2, X)),
     comp(Y,X);
@@ -93,14 +95,14 @@ unify (T,U) ->
                             " with " ++ util:to_string(U)})
     end.
 
--spec unifiable(hm:type(),hm:type()) -> boolean().
-unifiable(TypeA,TypeB) ->
+-spec maybeUnify(hm:type(),hm:type()) -> boolean().
+maybeUnify(TypeA,TypeB) ->
     try
         unify(TypeA,TypeB)
     of
-        _ -> true
+        S -> {just,S}
     catch
-        error:{type_error,_} -> false
+        error:{type_error,_} -> {nothing}
     end.
 
 -spec eqType(type(),type()) -> boolean().
@@ -334,7 +336,14 @@ solveOcP(_)              -> {nothing}.
 reduceOcPs(Ps) ->
     lists:map(fun(P) ->
          case P of 
-            {oc,CT,MTs}     -> {oc,CT,lists:filter(fun(MT) -> unifiable(CT,MT) end,MTs)};
+            {oc,CT,MTs}     ->
+                MTs_ = lists:foldr(fun(MT,AccMTs) ->
+                    case maybeUnify(MT,CT) of
+                        {just,S} -> [subT(MT,S) | AccMTs];
+                        {nothing} -> AccMTs
+                    end
+                end, [], MTs), 
+                {oc,CT,MTs_};
             T               -> T
         end
     end, Ps).
