@@ -49,10 +49,8 @@ solve ([{T1,T2}|Cs],Sub) ->
 
 -spec unifyMany([type()],[type()]) -> sub().
 unifyMany([],[])            -> emptySub();
-unifyMany([],_)             -> erlang:error({type_error, 
-                                    "Number of arguments do not match"});
-unifyMany(_,[])             -> erlang:error({type_error, 
-                                    "Number of arguments do not match"});
+unifyMany([],_)             -> erlang:error({type_error, "arg_mismatch"});
+unifyMany(_,[])             -> erlang:error({type_error, "arg_mismatch"});
 unifyMany ([A|As],[B|Bs])   ->
     Sub = unify(A,B),
     As_ = lists:map(fun(T) -> subT(T,Sub) end, As),
@@ -62,10 +60,18 @@ unifyMany ([A|As],[B|Bs])   ->
 % unify is left biased (this is a crucial property relied upon!)
 % i.e., unify(T1,T2) returns substitution for T1 in terms of T2
 -spec unify(type(), type()) -> sub().
-unify ({funt,_,As1, B1}, {funt,_,As2, B2}) ->
-    X = unifyMany (As1, As2),
-    Y = unify (subT(B1, X),subT(B2, X)),
-    comp(Y,X);
+unify ({funt,L1,As1, B1}, {funt,L2,As2, B2}) ->
+    try
+        unifyMany (As1, As2)
+    of
+        X -> 
+            Y = unify (subT(B1, X),subT(B2, X)),
+            comp(Y,X)
+    catch
+        error:{type_error,"arg_mismatch"} -> erlang:error({type_error, 
+                                    "Number of arguments to function on line " ++ util:to_string(L1) ++ " do not match"
+                                    ++ " arguments on line " ++ util:to_string(L2)})
+    end;  
 unify ({tvar,L,V},T) ->
     Eq  = eqType({tvar, L,V}, T),
     Occ = occurs(V,T),
