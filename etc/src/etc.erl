@@ -1,6 +1,7 @@
 -module(etc).
 -import(erl_syntax,[
     function_clauses/1,
+    fun_expr_clauses/1,
     clause_patterns/1,
     clause_body/1,
     clause_guard/1,
@@ -90,8 +91,11 @@ infer (Env,Node) ->
         float ->
             {float,L,_} = Node,
             {hm:bt(float,L),[],[]};
-        function ->
-            Clauses = function_clauses(Node),
+        Fun when Fun =:= function; Fun =:= fun_expr ->
+            Clauses = case Fun of 
+                function -> function_clauses(Node);
+                fun_expr -> fun_expr_clauses(Node)
+            end,
             % list of clause inference results
             ClausesInfRes = lists:map(fun(C) -> infer(Env,C) end, Clauses),
             % "flatten" clause inference results
