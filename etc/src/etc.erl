@@ -182,7 +182,7 @@ infer (Env,Node) ->
                     {atom,L,Constructor} = HeadEl,
                     % and the tail as arguments to constructor
                     Args = TailEls,
-                    {ConstrTypes,ConstrPs}   = lookupMulti(Constructor,Env,L),
+                    {ConstrTypes,ConstrPs}  = lookupMulti({Constructor,length(Args)},Env,L),
                     {ArgTypes,ArgCs,ArgPs}  = lists:foldl(fun(X, {AccT,AccCs,AccPs}) -> 
                         {T,Cs,Ps} = infer(Env,X),
                         {AccT ++ [T], AccCs ++ Cs, AccPs ++ Ps}
@@ -342,7 +342,7 @@ addUDT({TypeConstr,DataConstrs,Args},Env,L) ->
 -spec getConstrTypes(hm:type(),erl_syntax:syntaxTree()) -> [{var(),hm:type()}].
 getConstrTypes(Type,{type,L,tuple,[{atom,_,DataConstr}|Args]}) ->
     ArgTypes = lists:map(fun node2type/1, Args),
-    [{DataConstr,hm:funt(ArgTypes,Type,L)}];
+    [{{DataConstr,length(Args)},hm:funt(ArgTypes,Type,L)}];
 getConstrTypes(Type,{type,_,union,DataConstrDefns}) -> 
     lists:concat(
         lists:map(
