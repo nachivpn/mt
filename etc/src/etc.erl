@@ -316,7 +316,7 @@ lookup(X,Env,L) ->
 -spec lookupMulti(hm:tvar(),hm:env(),integer()) -> {[hm:type()],[hm:predicate()]}.
 lookupMulti(X,Env,L) ->
     case env:lookupMulti(X,Env) of
-        []   -> erlang:error({type_error,util:to_string(X) ++ " not bound on line " ++ util:to_string(L)});
+        []   -> erlang:error({type_error,"Unbound constructor " ++ util:to_string(X) ++ " on line " ++ util:to_string(L)});
         Ts           -> lists:foldr(fun(T,{AccTs,AccPs}) -> 
                             {FT,FPs} = hm:freshen(T),
                             {[FT|AccTs], FPs ++ AccPs}

@@ -85,7 +85,14 @@ unify (T,{tvar,L,V}) ->
     unify ({tvar,L,V},T);
 unify({tcon,L1,N1,As1},{tcon,L2,N2,As2}) ->
     case N1 == N2 of
-        true        -> unifyMany(As1,As2);
+        true        -> 
+            try
+                unifyMany(As1,As2)
+            catch   
+                error:{type_error,"arg_mismatch"} -> erlang:error({type_error, 
+                                    "Number of arguments to type constructor on line " ++ util:to_string(L1) ++ " do not match"
+                                    ++ " arguments on line " ++ util:to_string(L2)})
+            end;
         false       -> erlang:error({type_error,
                         "Cannot unify "++ util:to_string(N1) 
                         ++ " (on line "++ util:to_string(L1) ++")"
