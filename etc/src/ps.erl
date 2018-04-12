@@ -57,7 +57,7 @@ preSolved(_,_)        -> false.
 % returns a sub (obtained by solving predicates) and a list of unsolvable predicates
 -spec solveOcPs(hm:sub(),[hm:predicate()]) -> {hm:sub(),[hm:predicate()]}.
 solveOcPs(GivenSub,GivenPs) ->
-    Reduced = shrinkCandidates(GivenPs),
+    Reduced = nubOcPs(shrinkCandidates(GivenPs)),
     Solveable = lists:any(fun solveableOcP/1, Reduced),
     if
         Solveable -> 
@@ -109,6 +109,12 @@ solveableOcP(_) -> false.
 solveOcP({oc,CT,[MT]})   -> {just,unify(CT,MT)};
 solveOcP(_)              -> {nothing}.
 
+-spec nubOcPs([hm:predicate()]) -> [hm:predicate()].
+nubOcPs(Ps) ->
+    lists:foldl(fun(P,AccPs) ->
+        addToOcPSet(P,AccPs)
+    end,[],Ps).
+
 %%%%%%%%%%%%%
 %% Utilities
 %%%%%%%%%%%%%
@@ -122,3 +128,32 @@ maybeUnify(TypeA,TypeB) ->
     catch
         error:{type_error,_} -> {nothing}
     end.
+
+-spec addToOcPSet(hm:predicate(),[hm:predicate()]) -> [hm:predicate()].
+addToOcPSet(Px,[P|Ps]) -> 
+    case eqCt(Px,P) of
+        true -> 
+            {oc,_,MTsx} = Px,
+            {oc,CT,MTs} = P,
+            [{oc,CT,unionTypes(MTs,MTsx)}|Ps];
+        false -> [P|addToOcPSet(Px,Ps)]
+    end;
+addToOcPSet(Px,[]) -> [Px].
+
+-spec unionTypes([hm:type()],[hm:type()]) -> [hm:type()].
+unionTypes(Ts1,Ts2) ->
+    lists:foldr(fun(T,AccTs) ->
+        addToTypeSet(T,AccTs)
+    end,[],Ts1++Ts2).
+
+-spec addToTypeSet(hm:type(),[hm:type()]) -> [hm:type()].
+addToTypeSet(Tx,[T|Ts]=TsWhole) ->
+    case eqType(Tx,T) of
+        true -> TsWhole;
+        false -> [T|addToTypeSet(Tx,Ts)]
+    end;
+addToTypeSet(Tx,[]) -> [Tx].
+
+-spec eqCt(hm:predicate(),hm:predicate()) -> boolean().
+eqCt({oc,CTx,_},{oc,CT,_}) -> eqType(CTx,CT);
+eqCt(_,_) -> false.
