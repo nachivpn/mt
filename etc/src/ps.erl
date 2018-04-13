@@ -58,7 +58,7 @@ solveOcPs(Ps) ->
     % solve unification problems in oc predicates
     {Sub0, Unsolved0}    = uniSolveOcPs(emptySub(),Ps),
     % exhaustively search all oc predicates for common substitutions
-    Sub1                 = satSolveOcPs(emptySub(),Unsolved0),
+    Sub1                 = deduceCommonSubst(Unsolved0),
     Unsolved1            = subPs(Unsolved0,Sub1),
     {comp(Sub1,Sub0),Unsolved1}.
 
@@ -124,28 +124,41 @@ nubOcPs(Ps) ->
         addToOcPSet(P,AccPs)
     end,[],Ps).
 
+-spec deduceCommonSubst([hm:predicate()]) -> hm:sub().
+deduceCommonSubst(Ps) ->
+    Subs = deduceCommonSubst(emptySub(),Ps),
+    case Subs of
+        % none of the branches yielded a unifiable substitution
+        [] -> erlang:error({type_error,
+            "Unable to unify types of overloaded constructors on lines " 
+            ++ util:to_string(getOcpLines(Ps))});
+        _ -> intersectSub(Subs)
+    end.
+
 % visit every branch caused by a disjunction of unifications 
 % in oc predicates and collect common information (substitution)
--spec satSolveOcPs(hm:sub(),[hm:predicate()]) -> hm:sub().
-satSolveOcPs(Sub,[]) -> Sub;
-satSolveOcPs(Sub,[{oc,_,_}=P|Ps]) -> 
+-spec deduceCommonSubst(hm:sub(),[hm:predicate()]) -> [hm:sub()].
+deduceCommonSubst(Sub,[]) -> [Sub];
+deduceCommonSubst(Sub,[{oc,_,_}=P|Ps]) -> 
     % apply accumulated information on predicate
     {oc,CT,MTs} = subP(P,Sub),
     % visit every branch
-    Subs = lists:foldl(fun(MT,AccSubs) -> 
+    lists:foldl(fun(MT,AccSubs) -> 
         MaybeS = maybeUnify(CT,MT),
         case MaybeS of
-            {just,S} -> [satSolveOcPs(comp(S,Sub),Ps) | AccSubs];
+            {just,S} ->
+                BranchSubs = deduceCommonSubst(comp(S,Sub),Ps),
+                case BranchSubs of
+                    % none of the branches returned a solution, all failed
+                    [] -> AccSubs; 
+                    % atleast oe branch returned a solution, take intersection of them all
+                    _ -> [intersectSub(BranchSubs) | AccSubs]
+                end;
             {nothing} -> AccSubs
         end
-    end,[], MTs),
-    case Subs of
-        % none of the branches yielded a unifiable substitution
-        [] -> erlang:error({type_error,"Unsolvable oc predicate on line " ++ util:to_string(hm:getLn(CT))});
-        _ -> intersectSub(Subs)
-    end;
+    end,[], MTs);
 % no useful information to gain from non-oc predicate
-satSolveOcPs(Sub,[_|Ps]) -> satSolveOcPs(Sub,Ps).
+deduceCommonSubst(Sub,[_|Ps]) -> deduceCommonSubst(Sub,Ps).
 
 %%%%%%%%%%%%%
 %% Utilities
@@ -190,3 +203,12 @@ intersectSub(Ss) ->
     lists:foldl(fun({TVar,[Type|_]},AccSub) -> 
         maps:put(TVar,Type,AccSub)
     end, maps:new(),TVarTypesList_).
+
+-spec getOcpLines([hm:predicates()]) -> [integer()].
+getOcpLines(Ps) ->
+    lists:foldl(fun(P,AccLs) ->
+        case P of   
+            {oc,CT,_} -> [hm:getLn(CT) | AccLs];
+            _ -> AccLs
+        end
+    end,[],Ps).
