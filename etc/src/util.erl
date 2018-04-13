@@ -1,6 +1,8 @@
 -module (util).
--export([to_string/1,intersperse/2,interFoldEffect/4,
-    pairwiseChunk/1,getFnName/1,getFnArgLen/1,getFnClauses/1,getLn/1,getFnQName/1]).
+-export([to_string/1,intersperse/2,
+    interFoldEffect/4,pairwiseChunk/1,
+    getFnName/1,getFnArgLen/1,getFnClauses/1,
+    getLn/1,getFnQName/1,eqLists/3]).
 -export_type([maybe/1]).
 
 -type maybe(A) :: {nothing} | {just,A}.
@@ -31,3 +33,12 @@ getFnClauses (Fun) -> element(5,Fun).
 getLn(Node) -> element(2,Node).
 
 getFnQName(Fun) -> {getFnName(Fun),getFnArgLen(Fun)}.
+
+eqLists(Comp,Xs,Ys) ->
+    io:fwrite("wassp Xs = ~p ~nYs = ~p~n",[Xs,Ys]),
+    Y = (length(Xs) == length (Ys))
+    andalso
+    lists:all(
+        fun({X,Y}) -> Comp(X,Y) end, lists:zip(Xs,Ys)),
+    io:fwrite("wassp2!!!!!!!!"),
+    Y.

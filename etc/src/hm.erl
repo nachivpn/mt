@@ -115,21 +115,9 @@ unify (T,U) ->
 eqType({bt,_,A}, {bt,_,B}) -> A == B;
 eqType({tvar,_,X}, {tvar,_,Y}) -> X == Y;
 eqType({funt,_,As1, B1}, {funt,_,As2, B2}) ->
-    EqLenArgs = length(As1) == length(As2),
-    case EqLenArgs of
-        true -> lists:all(
-                    fun({T1,T2}) -> eqType(T1,T2) end
-                    , lists:zip(As1,As2)) 
-                and (B1 == B2);
-        false -> false
-    end;
+    eqType(B1,B2) andalso util:eqLists(fun eqType/2,As1,As2);
 eqType({tcon,_,N1,As1},{tcon,_,N2,As2}) ->
-    case (N1 == N2) and (length(As1) == length(As2)) of
-        true -> lists:all(
-                    fun(T1,T2) -> eqType(T1,T2) end
-                    , lists:zip(As1,As2));
-        false -> false
-    end;
+    (N1 == N2) andalso util:eqLists(fun eqType/2,As1,As2);
 eqType(_,_) -> false.
 
 %%%%%%%%%%%% Utilities
