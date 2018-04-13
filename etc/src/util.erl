@@ -2,7 +2,8 @@
 -export([to_string/1,intersperse/2,
     interFoldEffect/4,pairwiseChunk/1,
     getFnName/1,getFnArgLen/1,getFnClauses/1,
-    getLn/1,getFnQName/1,eqLists/3]).
+    getLn/1,getFnQName/1,eqLists/3,
+    keysIntersection/1,allElemEq/2]).
 -export_type([maybe/1]).
 
 -type maybe(A) :: {nothing} | {just,A}.
@@ -35,10 +36,22 @@ getLn(Node) -> element(2,Node).
 getFnQName(Fun) -> {getFnName(Fun),getFnArgLen(Fun)}.
 
 eqLists(Comp,Xs,Ys) ->
-    io:fwrite("wassp Xs = ~p ~nYs = ~p~n",[Xs,Ys]),
-    Y = (length(Xs) == length (Ys))
+    (length(Xs) == length (Ys))
     andalso
     lists:all(
-        fun({X,Y}) -> Comp(X,Y) end, lists:zip(Xs,Ys)),
-    io:fwrite("wassp2!!!!!!!!"),
-    Y.
+        fun({X,Y}) -> Comp(X,Y) end, lists:zip(Xs,Ys)).
+
+% [maps:map()] -> sets:set("keys")
+keysIntersection(Maps) -> 
+    KeySets = lists:map(fun(S) ->
+        sets:from_list(maps:keys(S))
+    end, Maps),
+    case length(KeySets) of
+        0 -> sets:new();
+        _ -> sets:intersection(KeySets)
+    end.
+
+allElemEq(_,[]) -> true;
+allElemEq(_,[_]) -> true;
+allElemEq(Comp,[X|[Y|Rem]]) -> 
+    Comp(X,Y) and allElemEq(Comp,[Y|Rem]).

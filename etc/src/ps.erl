@@ -15,7 +15,8 @@
 -spec psMain([hm:predicate()],[hm:predicate()]) -> {hm:sub(),[hm:predicate()]}.
 psMain(Premise,Ps) -> 
     % solve the oc predicates
-    {Sub, Unsolved0}    = solveOcPs(emptySub(),Ps),
+    {Sub0, Unsolved0}    = solveOcPs(emptySub(),Ps),
+    Sub1                 = superSolveOcps(emptySub(),Unsolved0),
     % solve class predicates 
     Unsolved1           = solveClassPs(Premise,Unsolved0),
     % select unsolved predicates for generalization
@@ -27,7 +28,7 @@ psMain(Premise,Ps) ->
             _                       -> erlang:error({type_error, "Cannot solve predicate: " ++ util:to_string(P)}) 
         end
     end, Unsolved1),
-    {Sub,Unsolved2}.
+    {comp(Sub1,Sub0),Unsolved2}.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%
 %% Class predicate solver
@@ -114,6 +115,41 @@ nubOcPs(Ps) ->
     lists:foldl(fun(P,AccPs) ->
         addToOcPSet(P,AccPs)
     end,[],Ps).
+
+-spec superSolveOcps(hm:sub(),[hm:predicate()]) -> hm:sub().
+superSolveOcps(Sub,[]) -> Sub;
+superSolveOcps(Sub,[{oc,CT,MTs}|Ps]) -> 
+    CT_ = subT(CT,Sub),
+    Subs = lists:foldl(fun(MT,AccSubs) -> 
+        MT_ = subT(MT,Sub),
+        MaybeS = maybeUnify(CT_,MT_),
+        case MaybeS of
+            {just,S} -> [superSolveOcps(comp(S,Sub),Ps) | AccSubs];
+            {nothing} -> AccSubs
+        end
+    end,[], MTs),
+    case length(Subs) of
+        0 -> erlang:error({type_error,"Unsolvable oc predicate on line " ++ util:to_string(hm:getLn(CT))});
+        _ -> intersectSub(Subs)
+    end;
+superSolveOcps(Sub,[_|Ps]) -> superSolveOcps(Sub,Ps).
+
+% returns a subtitution which is an intersection of a list of substitutions
+-spec intersectSub([hm:sub()]) -> hm:sub().
+intersectSub(Ss) -> 
+    CommonTVars = util:keysIntersection(Ss),
+    TVarTypesList = lists:map(fun(TVar) ->
+        Types = lists:map(fun(S) ->
+            maps:get(TVar,S)
+        end, Ss),
+        % a TVar and its types
+        {TVar,Types}
+    end, sets:to_list(CommonTVars)),
+    TVarTypesList_ = lists:filter(
+            fun({_,Types}) -> util:allElemEq(fun hm:eqType/2,Types) end, TVarTypesList),
+    lists:foldl(fun({TVar,[Type|_]},AccSub) -> 
+        maps:put(TVar,Type,AccSub)
+    end, maps:new(),TVarTypesList_).
 
 %%%%%%%%%%%%%
 %% Utilities
