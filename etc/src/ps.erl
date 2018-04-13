@@ -130,29 +130,12 @@ maybeUnify(TypeA,TypeB) ->
     end.
 
 -spec addToOcPSet(hm:predicate(),[hm:predicate()]) -> [hm:predicate()].
-addToOcPSet(Px,[P|Ps]) -> 
+addToOcPSet(Px,[P|Ps]=PPs) -> 
     case eqOcp(Px,P) of
-        true -> 
-            {oc,_,MTsx} = Px,
-            {oc,CT,MTs} = P,
-            [{oc,CT,unionTypes(MTs,MTsx)}|Ps];
-        false -> [P|addToOcPSet(Px,Ps)]
+        true    -> PPs;
+        false   -> [P|addToOcPSet(Px,Ps)]
     end;
 addToOcPSet(Px,[]) -> [Px].
-
--spec unionTypes([hm:type()],[hm:type()]) -> [hm:type()].
-unionTypes(Ts1,Ts2) ->
-    lists:foldr(fun(T,AccTs) ->
-        addToTypeSet(T,AccTs)
-    end,[],Ts1++Ts2).
-
--spec addToTypeSet(hm:type(),[hm:type()]) -> [hm:type()].
-addToTypeSet(Tx,[T|Ts]=TsWhole) ->
-    case eqType(Tx,T) of
-        true -> TsWhole;
-        false -> [T|addToTypeSet(Tx,Ts)]
-    end;
-addToTypeSet(Tx,[]) -> [Tx].
 
 -spec eqOcp(hm:predicate(),hm:predicate()) -> boolean().
 eqOcp({oc,CT1,MTs1},{oc,CT2,MTs2}) -> 
