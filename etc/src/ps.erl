@@ -13,10 +13,9 @@
 %%%%%%%%%%%%%%%%%%%%%%%%
 
 -spec psMain([hm:predicate()],[hm:predicate()]) -> {hm:sub(),[hm:predicate()]}.
-psMain(Premise,Ps) -> 
+psMain(Premise,Ps) ->
     % solve the oc predicates
-    {Sub0, Unsolved0}    = solveOcPs(emptySub(),Ps),
-    Sub1                 = superSolveOcps(emptySub(),Unsolved0),
+    {Sub, Unsolved0}    = solveOcPs(Ps),
     % solve class predicates 
     Unsolved1           = solveClassPs(Premise,Unsolved0),
     % select unsolved predicates for generalization
@@ -28,7 +27,7 @@ psMain(Premise,Ps) ->
             _                       -> erlang:error({type_error, "Cannot solve predicate: " ++ util:to_string(P)}) 
         end
     end, Unsolved1),
-    {comp(Sub1,Sub0),Unsolved2}.
+    {Sub,Unsolved2}.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%
 %% Class predicate solver
@@ -54,10 +53,19 @@ preSolved(_,_)        -> false.
 %% Overloaded constructor (OC) predicate solver
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+-spec solveOcPs([hm:predicate()]) -> {hm:sub(),[hm:predicate()]}.
+solveOcPs(Ps) ->
+    % solve unification problems in oc predicates
+    {Sub0, Unsolved0}    = uniSolveOcPs(emptySub(),Ps),
+    % exhaustively search all oc predicates for common substitutions
+    Sub1                 = satSolveOcPs(emptySub(),Unsolved0),
+    Unsolved1            = subPs(Unsolved0,Sub1),
+    {comp(Sub1,Sub0),Unsolved1}.
+
 % takes a sub and a list of predicates
 % returns a sub (obtained by solving predicates) and a list of unsolvable predicates
--spec solveOcPs(hm:sub(),[hm:predicate()]) -> {hm:sub(),[hm:predicate()]}.
-solveOcPs(GivenSub,GivenPs) ->
+-spec uniSolveOcPs(hm:sub(),[hm:predicate()]) -> {hm:sub(),[hm:predicate()]}.
+uniSolveOcPs(GivenSub,GivenPs) ->
     Reduced = nubOcPs(shrinkCandidates(GivenPs)),
     Solveable = lists:any(fun solveableOcP/1, Reduced),
     if
@@ -76,7 +84,7 @@ solveOcPs(GivenSub,GivenPs) ->
                 end
             end, {GivenSub,[]}, Reduced),
             % this new subst may open up new solveableOcPs
-            solveOcPs(Sub,Ps);
+            uniSolveOcPs(Sub,Ps);
         % none of the predicates are solveable
         true -> {GivenSub,Reduced}
     end.
@@ -116,40 +124,28 @@ nubOcPs(Ps) ->
         addToOcPSet(P,AccPs)
     end,[],Ps).
 
--spec superSolveOcps(hm:sub(),[hm:predicate()]) -> hm:sub().
-superSolveOcps(Sub,[]) -> Sub;
-superSolveOcps(Sub,[{oc,CT,MTs}|Ps]) -> 
-    CT_ = subT(CT,Sub),
+% visit every branch caused by a disjunction of unifications 
+% in oc predicates and collect common information (substitution)
+-spec satSolveOcPs(hm:sub(),[hm:predicate()]) -> hm:sub().
+satSolveOcPs(Sub,[]) -> Sub;
+satSolveOcPs(Sub,[{oc,_,_}=P|Ps]) -> 
+    % apply accumulated information on predicate
+    {oc,CT,MTs} = subP(P,Sub),
+    % visit every branch
     Subs = lists:foldl(fun(MT,AccSubs) -> 
-        MT_ = subT(MT,Sub),
-        MaybeS = maybeUnify(CT_,MT_),
+        MaybeS = maybeUnify(CT,MT),
         case MaybeS of
-            {just,S} -> [superSolveOcps(comp(S,Sub),Ps) | AccSubs];
+            {just,S} -> [satSolveOcPs(comp(S,Sub),Ps) | AccSubs];
             {nothing} -> AccSubs
         end
     end,[], MTs),
-    case length(Subs) of
-        0 -> erlang:error({type_error,"Unsolvable oc predicate on line " ++ util:to_string(hm:getLn(CT))});
+    case Subs of
+        % none of the branches yielded a unifiable substitution
+        [] -> erlang:error({type_error,"Unsolvable oc predicate on line " ++ util:to_string(hm:getLn(CT))});
         _ -> intersectSub(Subs)
     end;
-superSolveOcps(Sub,[_|Ps]) -> superSolveOcps(Sub,Ps).
-
-% returns a subtitution which is an intersection of a list of substitutions
--spec intersectSub([hm:sub()]) -> hm:sub().
-intersectSub(Ss) -> 
-    CommonTVars = util:keysIntersection(Ss),
-    TVarTypesList = lists:map(fun(TVar) ->
-        Types = lists:map(fun(S) ->
-            maps:get(TVar,S)
-        end, Ss),
-        % a TVar and its types
-        {TVar,Types}
-    end, sets:to_list(CommonTVars)),
-    TVarTypesList_ = lists:filter(
-            fun({_,Types}) -> util:allElemEq(fun hm:eqType/2,Types) end, TVarTypesList),
-    lists:foldl(fun({TVar,[Type|_]},AccSub) -> 
-        maps:put(TVar,Type,AccSub)
-    end, maps:new(),TVarTypesList_).
+% no useful information to gain from non-oc predicate
+satSolveOcPs(Sub,[_|Ps]) -> satSolveOcPs(Sub,Ps).
 
 %%%%%%%%%%%%%
 %% Utilities
@@ -177,3 +173,20 @@ addToOcPSet(Px,[]) -> [Px].
 eqOcp({oc,CT1,MTs1},{oc,CT2,MTs2}) -> 
     eqType(CT1,CT2) andalso util:eqLists(fun hm:eqType/2,MTs1,MTs2);
 eqOcp(_,_) -> false.
+
+% returns a subtitution which is an intersection of a list of substitutions
+-spec intersectSub([hm:sub()]) -> hm:sub().
+intersectSub(Ss) -> 
+    CommonTVars = util:keysIntersection(Ss),
+    TVarTypesList = lists:map(fun(TVar) ->
+        Types = lists:map(fun(S) ->
+            maps:get(TVar,S)
+        end, Ss),
+        % a TVar and its types
+        {TVar,Types}
+    end, sets:to_list(CommonTVars)),
+    TVarTypesList_ = lists:filter(
+            fun({_,Types}) -> util:allElemEq(fun hm:eqType/2,Types) end, TVarTypesList),
+    lists:foldl(fun({TVar,[Type|_]},AccSub) -> 
+        maps:put(TVar,Type,AccSub)
+    end, maps:new(),TVarTypesList_).
