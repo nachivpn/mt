@@ -79,18 +79,123 @@ typeCheckSCC(Functions,Env) ->
     
 
 -spec infer(hm:env(), erl_syntax:syntaxTree()) -> {hm:type(),[hm:constraint()],[hm:predicate()]}.
-infer (Env,Node) -> 
+infer(Env,{integer,L,_}) -> 
+    X = hm:fresh(L),
+    {X,[],[{class,"Num",X}]};
+infer(Env, {string,L,_}) ->
+    {hm:tcon("List", [hm:bt(char,L)],L),[],[]};
+infer(Env,{float,L,_}) ->
+    {hm:bt(float,L),[],[]}; 
+infer(Env,{clause,_,_,_,_}=Node) ->       
+    ClausePatterns = clause_patterns(Node),
+    L = element(2,Node),
+    % Infer types of arguments (which are in the form of patterns)
+    % Env_ is Env extended with arg variables
+    {ArgTypes, Env_, CsArgs, PsArgs} = inferPatterns(Env,ClausePatterns),
+    ClauseGaurds = clause_guard(Node),
+    {CsGaurds, PsGaurds} = checkGaurds(Env_,ClauseGaurds),
+    {ReturnType, CsBody, PsBody} = inferClauseBody(Env_,clause_body(Node)),
+    {hm:funt(ArgTypes,ReturnType,L)
+    , CsArgs ++ CsGaurds ++ CsBody 
+    , PsArgs ++ PsGaurds ++ PsBody};
+infer(Env,{var, L, X}) ->
+    {T, Ps} = lookup(X, Env, L),
+    {T, [], Ps};
+infer(Env,{call,L,F,Args}) ->
+    {T1,Cs1,Ps1} = inferFn(Env,F,length(Args)),   
+    {T2,Cs2,Ps2} = lists:foldl(
+        fun(X, {AccT,AccCs,AccPs}) -> 
+            {T,Cs,Ps} = infer(Env,X),
+            {AccT ++ [T], AccCs ++ Cs, AccPs ++ Ps}
+        end
+        , {[],[],[]}, Args),
+    V = hm:fresh(L),
+    {V, Cs1 ++ Cs2 ++ unify(T1, hm:funt(T2,V,L)), Ps1 ++ Ps2};
+infer(Env,{op,L,Op,E1,E2}) ->
+    {T, Ps} = lookup(Op, Env,L),
+    {T1, Cs1, Ps1} = infer(Env, E1),
+    {T2, Cs2, Ps2} = infer(Env, E2),
+    V = hm:fresh(L),
+    {V, Cs1 ++ Cs2 ++ unify(T, hm:funt([T1,T2],V,L)), Ps ++ Ps1 ++ Ps2};
+infer(_,{atom,L,X}) ->
+    case X of
+        B when (B == true) or (B == false) -> 
+                {hm:bt(boolean,L),[],[]};
+        _ ->    {hm:bt(atom,L),[],[]}
+    end;
+infer(Env,{'fun',L,{function,X,ArgLen}}) ->
+    {T, Ps} = lookup({X,ArgLen},Env,L), {T,[],Ps};
+infer(_,{nil,L}) ->
+    {hm:tcon("List",[hm:fresh(L)],L),[],[]};
+infer(Env,{cons,L,H,T}) ->
+    {HType,HCs,HPs} = infer(Env, H),
+    {TType,TCs,TPs} = infer(Env, T),
+    % generate a fresh "List V"
+    V = hm:fresh(L), 
+    LType = hm:tcon("List", [V],L),
+    {LType, HCs ++ TCs ++ 
+        unify(HType,V) ++   % unify head type with "V" 
+        unify(TType,LType)  % unify tail type with "List V"
+    , HPs ++ TPs};
+infer(Env,{tuple,L,Es}) ->
+    case Es of
+        % if first element of tuple is an atom,
+        [{atom,_,_}=HeadEl|TailEls]   ->
+            % then consider it as a constructor
+            {atom,L,Constructor} = HeadEl,
+            % and the tail as arguments to constructor
+            Args = TailEls,
+            {ConstrTypes,ConstrPs}  = lookupMulti({Constructor,length(Args)},Env,L),
+            {ArgTypes,ArgCs,ArgPs}  = lists:foldl(fun(X, {AccT,AccCs,AccPs}) -> 
+                {T,Cs,Ps} = infer(Env,X),
+                {AccT ++ [T], AccCs ++ Cs, AccPs ++ Ps}
+            end, {[],[],[]}, Args),
+            V = hm:fresh(L),
+            {V, ArgCs, [{oc,hm:funt(ArgTypes,V,L),ConstrTypes}] ++ ConstrPs ++ ArgPs};
+        _           ->
+            {Ts,Cs,Ps} = lists:foldl(
+                fun(X, {AccT,AccCs,AccPs}) -> 
+                    {T,Cs,Ps} = infer(Env,X),
+                    {AccT ++ [T], AccCs ++ Cs, AccPs ++ Ps}
+                end, {[],[],[]}, Es),
+            {hm:tcon("Tuple",Ts,L),Cs,Ps}
+    end;
+infer(Env,{'if',_,Clauses}) ->
+    {Ts, Cs, Ps} = lists:foldr(fun(Clause,{AccTs, AccCs,AccPs}) ->
+        % Check that guards are all boolean
+        {CsGaurds, PsGaurds} = checkGaurds(Env,clause_guard(Clause)),
+        % Type check the body, and return type of last expr in body
+        {TLast, CsBody, PsBody} = inferClauseBody(Env,clause_body(Clause)),
+        {[TLast | AccTs], CsGaurds ++ CsBody ++ AccCs, PsBody ++ PsGaurds ++ AccPs}
+    end, {[],[],[]}, Clauses),
+    {lists:last(Ts),Cs ++ unify(Ts),Ps};
+infer(Env,{'case',_,Expr,Clauses}) ->
+    {EType,ECs,EPs} = infer(Env,Expr),
+    {Ts, Cs, Ps} = lists:foldr(fun(Clause,{AccTs, AccCs,AccPs}) ->
+        % infer type of pattern
+        [ClausePattern] = clause_patterns(Clause),
+        {Env_,_,_}      = checkExpr(Env,ClausePattern),
+        {PatType,PatCs,PatPs} = infer(Env_,ClausePattern),
+        % check clause guards
+        {CsGaurds, PsGaurds} = checkGaurds(Env_,clause_guard(Clause)),
+        % infer type of body
+        {TLast, CsBody, PsBody} = inferClauseBody(Env_,clause_body(Clause)),
+        {   [TLast | AccTs], 
+            unify(EType,PatType) ++ PatCs ++ CsGaurds ++ CsBody ++ AccCs, 
+            PatPs ++ PsGaurds ++ PsBody ++ AccPs}
+    end, {[],[],[]}, Clauses),
+    {lists:last(Ts),ECs ++ Cs ++ unify(Ts),EPs ++ Ps};
+infer(Env,{match,_,LNode,RNode}) ->
+    {Env_, Cons1, Ps} = checkExpr(Env,LNode),
+    {LType, Cons2, PsL} = infer(Env_,LNode),
+    {RType, Cons3, PsR} = infer(Env,RNode),
+    { RType
+    , Cons1 ++ Cons2 ++ Cons3 ++ unify(LType,RType)
+    , Ps ++ PsL ++ PsR};
+infer(_,{var,L,'_'}) ->
+    {hm:fresh(L),[],[]};
+infer(Env,Node) ->
     case type(Node) of
-        integer -> 
-            {integer,L,_} = Node,
-            X = hm:fresh(L),
-            {X,[],[{class,"Num",X}]};
-        string ->
-            {string,L,_} = Node,
-            {hm:tcon("List", [hm:bt(char,L)],L),[],[]};
-        float ->
-            {float,L,_} = Node,
-            {hm:bt(float,L),[],[]};
         Fun when Fun =:= function; Fun =:= fun_expr ->
             Clauses = case Fun of 
                 function -> function_clauses(Node);
@@ -108,126 +213,6 @@ infer (Env,Node) ->
             UniCs = unify(InfTypes),
             % pick the type of any one clause as the type of fn
             {lists:last(InfTypes), InfCs ++ UniCs, InfPs};
-        clause ->
-            ClausePatterns = clause_patterns(Node),
-            L = element(2,Node),
-            % Infer types of arguments (which are in the form of patterns)
-            % Env_ is Env extended with arg variables
-            {ArgTypes, Env_, CsArgs, PsArgs} = inferPatterns(Env,ClausePatterns),
-            ClauseGaurds = clause_guard(Node),
-            {CsGaurds, PsGaurds} = checkGaurds(Env_,ClauseGaurds),
-            {ReturnType, CsBody, PsBody} = inferClauseBody(Env_,clause_body(Node)),
-            {hm:funt(ArgTypes,ReturnType,L)
-            , CsArgs ++ CsGaurds ++ CsBody 
-            , PsArgs ++ PsGaurds ++ PsBody};
-        variable ->
-            {var, L, X} = Node,
-            {T, Ps} = lookup(X, Env, L),
-            {T, [], Ps};
-        application ->
-            {call,L,F,Args} = Node,
-            {T1,Cs1,Ps1} = inferFn(Env,F,length(Args)),   
-            {T2,Cs2,Ps2} = lists:foldl(
-                fun(X, {AccT,AccCs,AccPs}) -> 
-                    {T,Cs,Ps} = infer(Env,X),
-                    {AccT ++ [T], AccCs ++ Cs, AccPs ++ Ps}
-                end
-                , {[],[],[]}, Args),
-            V = hm:fresh(L),
-            {V, Cs1 ++ Cs2 ++ unify(T1, hm:funt(T2,V,L)), Ps1 ++ Ps2};
-        infix_expr ->
-            {op,L,Op,E1,E2} = Node,
-            {T, Ps} = lookup(Op, Env,L),
-            {T1, Cs1, Ps1} = infer(Env, E1),
-            {T2, Cs2, Ps2} = infer(Env, E2),
-            V = hm:fresh(L),
-            {V, Cs1 ++ Cs2 ++ unify(T, hm:funt([T1,T2],V,L)), Ps ++ Ps1 ++ Ps2};
-        atom ->
-            {atom,L,X} = Node,
-            case X of
-                B when (B == true) or (B == false) -> 
-                        {hm:bt(boolean,L),[],[]};
-                _ ->    {hm:bt(atom,L),[],[]}
-            end;
-        implicit_fun ->
-            {'fun',L,{function,X,ArgLen}} = Node,
-            {T, Ps} = lookup({X,ArgLen},Env,L), {T,[],Ps};
-        nil ->
-            {nil,L} = Node,
-            {hm:tcon("List",[hm:fresh(L)],L),[],[]};
-        list -> 
-            {cons,L,H,T} = Node,
-            {HType,HCs,HPs} = infer(Env, H),
-            {TType,TCs,TPs} = infer(Env, T),
-            % generate a fresh "List V"
-            V = hm:fresh(L), 
-            LType = hm:tcon("List", [V],L),
-            {LType, HCs ++ TCs ++ 
-                unify(HType,V) ++   % unify head type with "V" 
-                unify(TType,LType)  % unify tail type with "List V"
-            , HPs ++ TPs};
-        tuple ->
-            {tuple,L,Es} = Node,
-            case Es of
-                % if first element of tuple is an atom,
-                [{atom,_,_}=HeadEl|TailEls]   ->
-                    % then consider it as a constructor
-                    {atom,L,Constructor} = HeadEl,
-                    % and the tail as arguments to constructor
-                    Args = TailEls,
-                    {ConstrTypes,ConstrPs}  = lookupMulti({Constructor,length(Args)},Env,L),
-                    {ArgTypes,ArgCs,ArgPs}  = lists:foldl(fun(X, {AccT,AccCs,AccPs}) -> 
-                        {T,Cs,Ps} = infer(Env,X),
-                        {AccT ++ [T], AccCs ++ Cs, AccPs ++ Ps}
-                    end, {[],[],[]}, Args),
-                    V = hm:fresh(L),
-                    {V, ArgCs, [{oc,hm:funt(ArgTypes,V,L),ConstrTypes}] ++ ConstrPs ++ ArgPs};
-                _           ->
-                    {Ts,Cs,Ps} = lists:foldl(
-                        fun(X, {AccT,AccCs,AccPs}) -> 
-                            {T,Cs,Ps} = infer(Env,X),
-                            {AccT ++ [T], AccCs ++ Cs, AccPs ++ Ps}
-                        end, {[],[],[]}, Es),
-                    {hm:tcon("Tuple",Ts,L),Cs,Ps}
-            end;
-        if_expr -> 
-            {'if',_,Clauses} = Node,
-            {Ts, Cs, Ps} = lists:foldr(fun(Clause,{AccTs, AccCs,AccPs}) ->
-                % Check that guards are all boolean
-                {CsGaurds, PsGaurds} = checkGaurds(Env,clause_guard(Clause)),
-                % Type check the body, and return type of last expr in body
-                {TLast, CsBody, PsBody} = inferClauseBody(Env,clause_body(Clause)),
-                {[TLast | AccTs], CsGaurds ++ CsBody ++ AccCs, PsBody ++ PsGaurds ++ AccPs}
-            end, {[],[],[]}, Clauses),
-            {lists:last(Ts),Cs ++ unify(Ts),Ps};
-        case_expr ->
-            {'case',_,Expr,Clauses} = Node,
-            {EType,ECs,EPs} = infer(Env,Expr),
-            {Ts, Cs, Ps} = lists:foldr(fun(Clause,{AccTs, AccCs,AccPs}) ->
-                % infer type of pattern
-                [ClausePattern] = clause_patterns(Clause),
-                {Env_,_,_}      = checkExpr(Env,ClausePattern),
-                {PatType,PatCs,PatPs} = infer(Env_,ClausePattern),
-                % check clause guards
-                {CsGaurds, PsGaurds} = checkGaurds(Env_,clause_guard(Clause)),
-                % infer type of body
-                {TLast, CsBody, PsBody} = inferClauseBody(Env_,clause_body(Clause)),
-                {   [TLast | AccTs], 
-                    unify(EType,PatType) ++ PatCs ++ CsGaurds ++ CsBody ++ AccCs, 
-                    PatPs ++ PsGaurds ++ PsBody ++ AccPs}
-            end, {[],[],[]}, Clauses),
-            {lists:last(Ts),ECs ++ Cs ++ unify(Ts),EPs ++ Ps};
-        match_expr -> 
-            {match,_,LNode,RNode} = Node,
-            {Env_, Cons1, Ps} = checkExpr(Env,LNode),
-            {LType, Cons2, PsL} = infer(Env_,LNode),
-            {RType, Cons3, PsR} = infer(Env,RNode),
-            { RType
-            , Cons1 ++ Cons2 ++ Cons3 ++ unify(LType,RType)
-            , Ps ++ PsL ++ PsR};
-        underscore ->
-            {var,L,'_'} = Node,
-            {hm:fresh(L),[],[]};
         X -> erlang:error({type_error," Cannot infer type of " 
             ++ util:to_string(Node) ++ " with node type "++ util:to_string(X)})
     end.
