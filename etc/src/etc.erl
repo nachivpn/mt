@@ -87,7 +87,7 @@ infer (Env,Node) ->
             {X,[],[{class,"Num",X}]};
         string ->
             {string,L,_} = Node,
-            {hm:bt(string,L),[],[]};
+            {hm:tcon("List", [hm:bt(char,L)],L),[],[]};
         float ->
             {float,L,_} = Node,
             {hm:bt(float,L),[],[]};
@@ -116,16 +116,10 @@ infer (Env,Node) ->
             {ArgTypes, Env_, CsArgs, PsArgs} = inferPatterns(Env,ClausePatterns),
             ClauseGaurds = clause_guard(Node),
             {CsGaurds, PsGaurds} = checkGaurds(Env_,ClauseGaurds),
-            Body = clause_body(Node),
-            {Env__, CsBody, PsBody} =lists:foldl(
-                fun(Expr, {Ei,Csi,Psi}) -> 
-                    {Ei_,Csi_,Psi_} = checkExpr(Ei,Expr),
-                    {Ei_, Csi ++ Csi_, Psi ++ Psi_}
-                end, {Env_,[],[]}, lists:droplast(Body)),
-            {ReturnType, CsLast, PsLast} = infer(Env__, lists:last(Body)),
+            {ReturnType, CsBody, PsBody} = inferClauseBody(Env_,clause_body(Node)),
             {hm:funt(ArgTypes,ReturnType,L)
-            , CsArgs ++ CsGaurds ++ CsBody ++ CsLast 
-            , PsArgs ++ PsGaurds ++ PsBody ++ PsLast};
+            , CsArgs ++ CsGaurds ++ CsBody 
+            , PsArgs ++ PsGaurds ++ PsBody};
         variable ->
             {var, L, X} = Node,
             {T, Ps} = lookup(X, Env, L),
@@ -167,7 +161,7 @@ infer (Env,Node) ->
             {TType,TCs,TPs} = infer(Env, T),
             % generate a fresh "List V"
             V = hm:fresh(L), 
-            LType = {tcon, L, "List", [V]},
+            LType = hm:tcon("List", [V],L),
             {LType, HCs ++ TCs ++ 
                 unify(HType,V) ++   % unify head type with "V" 
                 unify(TType,LType)  % unify tail type with "List V"
@@ -197,22 +191,32 @@ infer (Env,Node) ->
                     {hm:tcon("Tuple",Ts,L),Cs,Ps}
             end;
         if_expr -> 
-            {'if',L,Clauses} = Node,
+            {'if',_,Clauses} = Node,
             {Ts, Cs, Ps} = lists:foldr(fun(Clause,{AccTs, AccCs,AccPs}) ->
                 % Check that guards are all boolean
-                ClauseGaurds = clause_guard(Clause),
-                {CsGaurds, PsGaurds} = checkGaurds(Env,ClauseGaurds),
+                {CsGaurds, PsGaurds} = checkGaurds(Env,clause_guard(Clause)),
                 % Type check the body, and return type of last expr in body
-                Body = clause_body(Clause),
-                {Env_, CsBody, PsBody} = lists:foldl(
-                    fun(Expr, {Ei,Csi,Psi}) -> 
-                        {Ei_,Csi_,Psi_} = checkExpr(Ei,Expr),
-                        {Ei_, Csi ++ Csi_, Psi ++ Psi_}
-                    end, {Env,[],[]}, lists:droplast(Body)),
-                {TLast, CsLast, PsLast} = infer(Env_, lists:last(Body)),
-                {[TLast | AccTs], CsGaurds ++ CsBody ++ CsLast ++ AccCs, PsBody ++ PsGaurds ++ PsLast ++ AccPs}
+                {TLast, CsBody, PsBody} = inferClauseBody(Env,clause_body(Clause)),
+                {[TLast | AccTs], CsGaurds ++ CsBody ++ AccCs, PsBody ++ PsGaurds ++ AccPs}
             end, {[],[],[]}, Clauses),
             {lists:last(Ts),Cs ++ unify(Ts),Ps};
+        case_expr ->
+            {'case',_,Expr,Clauses} = Node,
+            {EType,ECs,EPs} = infer(Env,Expr),
+            {Ts, Cs, Ps} = lists:foldr(fun(Clause,{AccTs, AccCs,AccPs}) ->
+                % infer type of pattern
+                [ClausePattern] = clause_patterns(Clause),
+                {Env_,_,_}      = checkExpr(Env,ClausePattern),
+                {PatType,PatCs,PatPs} = infer(Env_,ClausePattern),
+                % check clause guards
+                {CsGaurds, PsGaurds} = checkGaurds(Env_,clause_guard(Clause)),
+                % infer type of body
+                {TLast, CsBody, PsBody} = inferClauseBody(Env_,clause_body(Clause)),
+                {   [TLast | AccTs], 
+                    unify(EType,PatType) ++ PatCs ++ CsGaurds ++ CsBody ++ AccCs, 
+                    PatPs ++ PsGaurds ++ PsBody ++ AccPs}
+            end, {[],[],[]}, Clauses),
+            {lists:last(Ts),ECs ++ Cs ++ unify(Ts),EPs ++ Ps};
         match_expr -> 
             {match,_,LNode,RNode} = Node,
             {Env_, Cons1, Ps} = checkExpr(Env,LNode),
@@ -270,8 +274,9 @@ inferPatterns(Env,ClausePatterns) ->
 -spec inferFn(hm:env(),erl_syntax:syntaxTree(),integer()) -> {hm:type(),[hm:constraint()],[hm:predicate()]}.
 inferFn(Env,{atom,L,X},ArgLen) ->
     {T, Ps} = lookup({X,ArgLen},Env,L), {T,[],Ps};
-inferFn(Env,{var,L,X},_) ->
-    infer(Env,{var,L,X}).
+inferFn(Env,X,_) ->
+    infer(Env,X).
+
 
 -spec checkGaurds(hm:env(),erl_syntax:syntaxTree()) -> {[hm:constraint()],[hm:predicate()]}.
 checkGaurds(Env,{tree,disjunction,_,Conjuctions}) ->
@@ -284,6 +289,15 @@ checkGaurds(Env,{tree,disjunction,_,Conjuctions}) ->
    end, {[],[]}, Conjuctions);
 checkGaurds(_,none) -> {[],[]}.
 
+-spec inferClauseBody(hm:env(),erl_syntax:syntaxTree()) -> {hm:type(),[hm:constraint()],[hm:predicate()]}.
+inferClauseBody(Env,Body) -> 
+    {Env_, CsBody, PsBody} = lists:foldl(
+                    fun(Expr, {Ei,Csi,Psi}) -> 
+                        {Ei_,Csi_,Psi_} = checkExpr(Ei,Expr),
+                        {Ei_, Csi ++ Csi_, Psi ++ Psi_}
+                    end, {Env,[],[]}, lists:droplast(Body)),
+    {TLast, CsLast, PsLast} = infer(Env_, lists:last(Body)),
+    {TLast, CsBody ++ CsLast, PsBody ++ PsLast}.
 %%%%%%%%%%%%%%%%%% Utilities
 
 % "pseudo unify" which returns constraints

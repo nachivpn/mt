@@ -46,5 +46,11 @@ defaultEnv() ->
         {'--', hm:forall(a,[],
                 hm:funt([hm:tcon("List",[hm:tvar(a,0)],-1),
                         hm:tcon("List",[hm:tvar(a,0)],-2)],
-                        hm:tcon("List",[hm:tvar(a,0)],0),0),0)}
+                        hm:tcon("List",[hm:tvar(a,0)],0),0),0)},
+        {{is_atom,1}, hm:funt([hm:bt(atom,-1)],hm:bt(boolean,0),0)},
+        {{is_integer,1}, hm:funt([hm:bt(integer,-1)],hm:bt(boolean,0),0)},
+        {{is_list,1}, hm:forall(a,[],
+                hm:funt([hm:tcon("List",[hm:tvar(a,0)],-1)],
+                        hm:bt(boolean,0),0),0)},
+        {{is_boolean,1}, hm:funt([hm:bt(boolean,-1)],hm:bt(boolean,0),0)}
     ]).
