@@ -174,10 +174,9 @@ infer (Env,Node) ->
             , HPs ++ TPs};
         tuple ->
             {tuple,L,Es} = Node,
-            [HeadEl|TailEls] = Es,
-            case type(HeadEl) of
+            case Es of
                 % if first element of tuple is an atom,
-                atom        ->
+                [{atom,_,_}=HeadEl|TailEls]   ->
                     % then consider it as a constructor
                     {atom,L,Constructor} = HeadEl,
                     % and the tail as arguments to constructor
