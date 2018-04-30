@@ -79,12 +79,12 @@ typeCheckSCC(Functions,Env) ->
     
 
 -spec infer(hm:env(), erl_syntax:syntaxTree()) -> {hm:type(),[hm:constraint()],[hm:predicate()]}.
-infer(Env,{integer,L,_}) -> 
+infer(_,{integer,L,_}) -> 
     X = hm:fresh(L),
     {X,[],[{class,"Num",X}]};
-infer(Env, {string,L,_}) ->
+infer(_, {string,L,_}) ->
     {hm:tcon("List", [hm:bt(char,L)],L),[],[]};
-infer(Env,{float,L,_}) ->
+infer(_,{float,L,_}) ->
     {hm:bt(float,L),[],[]}; 
 infer(Env,{clause,_,_,_,_}=Node) ->       
     ClausePatterns = clause_patterns(Node),
@@ -98,6 +98,8 @@ infer(Env,{clause,_,_,_,_}=Node) ->
     {hm:funt(ArgTypes,ReturnType,L)
     , CsArgs ++ CsGaurds ++ CsBody 
     , PsArgs ++ PsGaurds ++ PsBody};
+infer(_,{var,L,'_'}) ->
+    {hm:fresh(L),[],[]};
 infer(Env,{var, L, X}) ->
     {T, Ps} = lookup(X, Env, L),
     {T, [], Ps};
@@ -192,8 +194,6 @@ infer(Env,{match,_,LNode,RNode}) ->
     { RType
     , Cons1 ++ Cons2 ++ Cons3 ++ unify(LType,RType)
     , Ps ++ PsL ++ PsR};
-infer(_,{var,L,'_'}) ->
-    {hm:fresh(L),[],[]};
 infer(Env,Node) ->
     case type(Node) of
         Fun when Fun =:= function; Fun =:= fun_expr ->
