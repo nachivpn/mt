@@ -194,6 +194,10 @@ infer(Env,{match,_,LNode,RNode}) ->
     { RType
     , Cons1 ++ Cons2 ++ Cons3 ++ unify(LType,RType)
     , Ps ++ PsL ++ PsR};
+infer(Env,{lc,L,Expr,Defs}) ->
+    {Env_,DefCs,DefPs} = checkLCDefs(Env,Defs),
+    {T, ExprCs, ExprPs} = infer(Env_,Expr),
+    {hm:tcon("List", [T],L), DefCs ++ ExprCs, DefPs ++ ExprPs};
 infer(Env,Node) ->
     case type(Node) of
         Fun when Fun =:= function; Fun =:= fun_expr ->
@@ -283,6 +287,32 @@ inferClauseBody(Env,Body) ->
                     end, {Env,[],[]}, lists:droplast(Body)),
     {TLast, CsLast, PsLast} = infer(Env_, lists:last(Body)),
     {TLast, CsBody ++ CsLast, PsBody ++ PsLast}.
+
+% check the types of the list comprehension defns (generators and filters)
+% te resulting env is used for type inference of the main expression in lc
+-spec checkLCDefs(hm:env(), [erl_syntax:syntaxTree()]) -> {hm:env(),[hm:constraint()],[hm:predicate()]}.
+checkLCDefs(Env,Exprs) ->
+    % fold over lc defs & accumulate env, cs & ps
+    lists:foldl(fun(Expr,{AccEnv,AccCs,AccPs}) ->
+        case Expr of
+            % generators must be a list
+            {generate,L,{var,_,X},List} ->
+                {ActualListType,Cs,Ps} = infer(AccEnv,List),
+                XType = hm:fresh(L),
+                ExpectedListType = hm:tcon("List", [XType],L),
+                {env:extend(X,XType,AccEnv) 
+                    , unify(ActualListType,ExpectedListType) ++ Cs ++ AccCs
+                    , Ps ++ AccPs};
+            % filter must be boolean
+            _   ->
+                {ActualType,Cs,Ps} = infer(AccEnv,Expr),
+                ExpectedType = hm:bt(boolean,hm:getLn(ActualType)),
+                {AccEnv
+                    , unify(ActualType,ExpectedType) ++ Cs++ AccCs
+                    , Ps ++ AccPs}
+        end
+    end,{Env,[],[]},Exprs).
+    
 %%%%%%%%%%%%%%%%%% Utilities
 
 % "pseudo unify" which returns constraints
