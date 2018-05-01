@@ -17,17 +17,13 @@
 
 parse_transform(Forms,_) ->
     % get all user define data types (UDTs) 
-    UDTs = lists:filter(fun (Node) -> 
-            (type(Node) == 'attribute') andalso
-            (element(3,Node) == 'type')
-    end, Forms),
+    UDTs = pp:getUDTs(Forms),
     % add UDTs to default env
     Env = lists:foldl(fun(UDT,AccEnv) -> 
         addUDTNode(UDT,AccEnv) 
     end, rt:defaultEnv(), UDTs),
     % get all functions
-    Functions = lists:filter(
-        fun (Node) -> type(Node) == function end, Forms),
+    Functions = pp:getFns(Forms),
     % make strongly connected components (SCCs) (sorted in topological ordering)
     SCCs = da:mkSCCs(Functions),
     % type check each SCC and extend Env
@@ -45,7 +41,7 @@ parse_transform(Forms,_) ->
     catch
         error:{type_error,Reason} -> erlang:error("Type Error: " ++ Reason)
     end,
-    Forms.    
+    pp:eraseAnn(Forms).    
 
 typeCheckSCC(Functions,Env) ->
     % assign a fresh type variable to every function
