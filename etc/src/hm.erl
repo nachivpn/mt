@@ -331,7 +331,7 @@ prettify(Env, {tcon, _, N, As}) ->
         , fun() -> io:fwrite(" ") end
         , Env, As);
 prettify(Env,{forall, T, Ps, A}) ->
-    io:fwrite("∀",[]),
+    io:fwrite("all ",[]),
     Env1 = prettify(Env, T),
     io:fwrite("[",[]),
     Env2 = lists:foldl(fun(P, AccEnv) ->

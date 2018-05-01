@@ -1,0 +1,17 @@
+{application, etc,
+ [{description, "Erlang type checker"},
+  {vsn, "0.1.0"},
+  {registered, []},
+  {mod, { etc_app, []}},
+  {applications,
+   [kernel,
+    stdlib,
+    erlscp
+   ]},
+  {env,[]},
+  {modules, []},
+
+  {maintainers, []},
+  {licenses, ["Apache 2.0"]},
+  {links, []}
+ ]}.
