@@ -8,13 +8,13 @@ import Data.List
 
 goodDir = "good"
 badDir = "bad"
-relEtcDir = "../../etc/src"
+etcDir = "../etc"
 
 runTests :: [FilePath] -> ExitCode -> IO ()
 runTests [] allowedEc = putStrLn "\x1b[0m" >> return ()
 runTests (x:xs) allowedEc = do
     putStr $  "\x1b[32m" ++ "Compiling " ++ show x ++ ".."
-    (ec, stdout, stderr) <- readProcessWithExitCode "erlc" ["-pa", relEtcDir, x] ""
+    (ec, stdout, stderr) <- readProcessWithExitCode "./erly" [x] ""
     if ec /= allowedEc 
         then do
             putStrLn "\x1b[31mFAILED! STDOUT:"
@@ -27,8 +27,13 @@ runTests (x:xs) allowedEc = do
 main :: IO ()
 main = do
     let erlFiles = filter (isSuffixOf ".erl")
+        erly = etcDir </> "erly"
+        build = readProcessWithExitCode "rebar3" ["escriptize"] ""
     goodTests <- erlFiles <$> listDirectory goodDir
     badTests <- erlFiles <$> listDirectory badDir
+    withCurrentDirectory etcDir build
+    copyFile erly (goodDir </> "erly")
+    copyFile erly (badDir </> "erly")
     withCurrentDirectory goodDir (runTests goodTests ExitSuccess)
     withCurrentDirectory badDir (runTests badTests (ExitFailure 1))
 

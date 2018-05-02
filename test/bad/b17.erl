@@ -1,5 +1,4 @@
 -module(b17).
--compile({parse_transform, etc}).
 
 % bad function clause unification - 1
 

@@ -1,5 +1,4 @@
 -module(b9).
--compile({parse_transform, etc}).
 
 foo(X,Y) -> X div 2.
 

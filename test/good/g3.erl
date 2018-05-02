@@ -1,5 +1,4 @@
 -module(g3).
--compile({parse_transform, etc}).
 
 ceq(X,Y) -> X == Y.
 

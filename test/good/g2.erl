@@ -1,5 +1,4 @@
 -module(g2).
--compile({parse_transform, etc}).
 
 % Simple (straight forward) boolean expressions
 % benot(X) -> not X.

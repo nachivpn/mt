@@ -1,5 +1,4 @@
 -module (b3).
--compile({parse_transform, etc}).
 
 f1(X,Y) -> X + Y + 4.5.
 

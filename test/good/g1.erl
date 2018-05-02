@@ -1,5 +1,4 @@
 -module (g1).
--compile({parse_transform, etc}).
 
 % simple (straight forward) arithmetic
 

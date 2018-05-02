@@ -1,5 +1,4 @@
 -module(g10).
--compile({parse_transform, etc}).
 
 % list computations
 

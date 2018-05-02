@@ -1,5 +1,4 @@
 -module(g7).
--compile({parse_transform, etc}).
 
 % simple mutually recursive functions
 

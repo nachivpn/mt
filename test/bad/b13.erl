@@ -1,5 +1,4 @@
 -module(b13).
--compile({parse_transform, etc}).
 
 -type err(A) :: {left, A} | {right, A}.
 -type dir(A) :: {left,A} | {right, A} | {fwd,A} | {bwd,A}.

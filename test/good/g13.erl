@@ -1,5 +1,4 @@
 -module(g13).
--compile({parse_transform, etc}).
 
 
 -type either(A) :: {left, A} | {right, A}.

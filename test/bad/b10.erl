@@ -1,5 +1,4 @@
 -module(b10).
--compile({parse_transform, etc}).
 
 % returns a list of integers
 intTail([X|Xs]) -> X div 1, Xs.

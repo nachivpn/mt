@@ -1,5 +1,4 @@
 -module(b16).
--compile({parse_transform, etc}).
 
 % bad when
 

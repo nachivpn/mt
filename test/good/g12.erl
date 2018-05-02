@@ -1,5 +1,4 @@
 -module(g12).
--compile({parse_transform, etc}).
 
 %  Overloaded constructors - simple
 -type myList(A) :: {nil} | {cons, A, myList(A)}.

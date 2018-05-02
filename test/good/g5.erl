@@ -1,5 +1,4 @@
 -module(g5).
--compile({parse_transform, etc}).
 
 %Simple recursive functions
 

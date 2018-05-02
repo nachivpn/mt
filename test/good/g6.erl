@@ -1,5 +1,4 @@
 -module (g6).
--compile({parse_transform, etc}).
 
 % collection of arbitrary tests
 

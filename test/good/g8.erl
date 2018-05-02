@@ -1,5 +1,4 @@
 -module(g8).
--compile({parse_transform, etc}).
 
 % function with different arities
 

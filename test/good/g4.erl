@@ -1,5 +1,4 @@
 -module (g4).
--compile({parse_transform, etc}).
 
 % "Erlangy" arithmetic
 

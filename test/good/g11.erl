@@ -1,5 +1,4 @@
 -module(g11).
--compile({parse_transform, etc}).
 
 
 % User defined data types
