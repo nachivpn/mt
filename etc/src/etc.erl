@@ -183,6 +183,24 @@ infer(Env,{'case',_,Expr,Clauses}) ->
             PatPs ++ PsGaurds ++ PsBody ++ AccPs}
     end, {[],[],[]}, Clauses),
     {lists:last(Ts),ECs ++ Cs ++ unify(Ts),EPs ++ Ps};
+infer(Env,{'receive',_,Clauses}) ->
+    {PatTs, BodTs, Cs, Ps} = lists:foldr(fun(Clause,{AccPatTs,AccBodyTs, AccCs,AccPs}) ->
+        % infer type of pattern
+        [ClausePattern] = clause_patterns(Clause),
+        {Env_,_,_}      = checkExpr(Env,ClausePattern),
+        {PatType,PatCs,PatPs} = infer(Env_,ClausePattern),
+        % check clause guards
+        {GaurdsCs, GaurdsPs} = checkGaurds(Env_,clause_guard(Clause)),
+        % infer type of body
+        {BodyType, BodyCs, BodyPs} = inferClauseBody(Env_,clause_body(Clause)),
+        {   [PatType | AccPatTs],
+            [BodyType | AccBodyTs], 
+            PatCs ++ GaurdsCs ++ BodyCs  ++ AccCs, 
+            PatPs ++ GaurdsPs ++ BodyPs  ++ AccPs}
+    end, {[],[],[],[]}, Clauses),
+    { lists:last(BodTs)
+        , Cs ++ unify(PatTs)++ unify(BodTs)
+        , Ps};
 infer(Env,{match,_,LNode,RNode}) ->
     {Env_, Cons1, Ps} = checkExpr(Env,LNode),
     {LType, Cons2, PsL} = infer(Env_,LNode),
@@ -274,6 +292,7 @@ checkGaurds(Env,{tree,disjunction,_,Conjuctions}) ->
    end, {[],[]}, Conjuctions);
 checkGaurds(_,none) -> {[],[]}.
 
+% given a body of a clause, returns its type
 -spec inferClauseBody(hm:env(),erl_syntax:syntaxTree()) -> {hm:type(),[hm:constraint()],[hm:predicate()]}.
 inferClauseBody(Env,Body) -> 
     {Env_, CsBody, PsBody} = lists:foldl(

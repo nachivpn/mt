@@ -4,7 +4,10 @@
 -spec defaultClasses() -> [hm:predicate()].
 defaultClasses() -> [
     {class,"Num",hm:bt(integer,0)},
-    {class,"Num",hm:bt(float,0)}
+    {class,"Num",hm:bt(float,0)},
+    {class,"Pid",hm:bt(pid,0)},
+    {class,"Pid",hm:bt(atom,0)},
+    {class,"Pid",hm:tcon("Tuple",[hm:bt(atom,0),hm:bt(atom,0)],0)} 
 ].
 
 -spec defaultEnv() -> hm:env().
@@ -52,5 +55,10 @@ defaultEnv() ->
         {{is_list,1}, hm:forall(a,[],
                 hm:funt([hm:tcon("List",[hm:tvar(a,0)],-1)],
                         hm:bt(boolean,0),0),0)},
-        {{is_boolean,1}, hm:funt([hm:bt(boolean,-1)],hm:bt(boolean,0),0)}
+        {{is_boolean,1}, hm:funt([hm:bt(boolean,-1)],hm:bt(boolean,0),0)},
+        {'!', hm:forall(a,[{class,"Pid", hm:tvar(a,0)}],
+                hm:funt([hm:tvar(a,-1),hm:tvar(b,-2)],hm:tvar(b,0),0),0) },
+        {{self,0}, hm:funt([],hm:bt(pid,0),0)},
+        {{spawn,1}, hm:funt([hm:funt([],hm:tvar(a,-10),-1)],hm:bt(pid,0),0)},
+        {{spawn,2}, hm:funt([hm:bt(atom,-1),hm:funt([],hm:tvar(a,-20),-2)],hm:bt(pid,0),0)}
     ]).
