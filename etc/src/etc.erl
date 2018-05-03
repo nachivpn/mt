@@ -82,9 +82,8 @@ infer(_, {string,L,_}) ->
     {hm:tcon("List", [hm:bt(char,L)],L),[],[]};
 infer(_,{float,L,_}) ->
     {hm:bt(float,L),[],[]}; 
-infer(Env,{clause,_,_,_,_}=Node) ->       
+infer(Env,{clause,L,_,_,_}=Node) ->       
     ClausePatterns = clause_patterns(Node),
-    L = element(2,Node),
     % Infer types of arguments (which are in the form of patterns)
     % Env_ is Env extended with arg variables
     {ArgTypes, Env_, CsArgs, PsArgs} = inferPatterns(Env,ClausePatterns),
@@ -159,22 +158,23 @@ infer(Env,{tuple,L,Es}) ->
             {hm:tcon("Tuple",Ts,L),Cs,Ps}
     end;
 infer(Env,{'if',_,Clauses}) ->
-    {Ts, Cs, Ps} = lists:foldr(fun(Clause,{AccTs, AccCs,AccPs}) ->
-        % Check that guards are all boolean
-        {CsGaurds, PsGaurds} = checkGaurds(Env,clause_guard(Clause)),
-        % Type check the body, and return type of last expr in body
-        {TLast, CsBody, PsBody} = inferClauseBody(Env,clause_body(Clause)),
-        {[TLast | AccTs], CsGaurds ++ CsBody ++ AccCs, PsBody ++ PsGaurds ++ AccPs}
-    end, {[],[],[]}, Clauses),
-    {lists:last(Ts),Cs ++ unify(Ts),Ps};
+    {ClauseTs, Cs, Ps} = inferClauses(Env,Clauses),
+    BodTs = getTypesOfBodies(ClauseTs),
+    { lists:last(BodTs)
+    , Cs ++ unify(BodTs)
+    , Ps};
 infer(Env,{'case',_,Expr,Clauses}) ->
     {EType,ECs,EPs} = infer(Env,Expr),
-    {PatTs, BodTs, Cs, Ps} = inferClauses(Env,Clauses),
+    {ClauseTs, Cs, Ps} = inferClauses(Env,Clauses),
+    PatTs = lists:map(fun({[PT],_}) -> PT end, ClauseTs),
+    BodTs = getTypesOfBodies(ClauseTs),
     { lists:last(BodTs)
     , ECs ++ Cs ++ unify(PatTs) ++ unify(BodTs) ++ unify(EType,lists:last(PatTs))
     , EPs ++ Ps};
 infer(Env,{'receive',_,Clauses}) ->
-    {PatTs, BodTs, Cs, Ps} = inferClauses(Env,Clauses),
+    {ClauseTs, Cs, Ps} = inferClauses(Env,Clauses),
+    PatTs = lists:map(fun({[PT],_}) -> PT end, ClauseTs),
+    BodTs = getTypesOfBodies(ClauseTs),
     { lists:last(BodTs)
     , Cs ++ unify(PatTs)++ unify(BodTs)
     , Ps};
@@ -282,27 +282,25 @@ inferClauseBody(Env,Body) ->
 
 % Used to infer the type of a list of clauses
 % given a list of clauses, it returns a tuple of: 
-% 1. list types of patterns
-% 2. list of types of clause body
-% 3. all constraints inferred in the process
-% 4. all predicates which arise in the process
+% 1. list of clause types i.e., [{PatternTypes,BodyType}]
+% 2. all constraints inferred in the process
+% 3. all predicates which arise in the process
 -spec inferClauses(hm:env(),[erl_syntax:syntaxTree()]) -> 
-    {[hm:type()], [hm:type()],[hm:constraint()],[hm:predicate()]}.
+    {[{[hm:type()], hm:type()}], [hm:constraint()],[hm:predicate()]}.
 inferClauses(Env,Clauses) ->
-    lists:foldr(fun(Clause,{AccPatTs,AccBodyTs,AccCs,AccPs}) ->
+    lists:foldr(fun(Clause,{AccClauseTs,AccCs,AccPs}) ->
         % infer type of pattern
-        [ClausePattern] = clause_patterns(Clause),
-        {Env_,_,_}      = checkExpr(Env,ClausePattern),
-        {PatType,PatCs,PatPs} = infer(Env_,ClausePattern),
+        {PatTypes,Env_,PatCs,PatPs} = inferPatterns(Env,clause_patterns(Clause)),
         % check clause guards
         {GaurdsCs, GaurdsPs} = checkGaurds(Env_,clause_guard(Clause)),
         % infer type of body
         {BodyType, BodyCs, BodyPs} = inferClauseBody(Env_,clause_body(Clause)),
-        {   [PatType | AccPatTs],
-            [BodyType | AccBodyTs], 
+        {  [{PatTypes, BodyType} | AccClauseTs], 
             PatCs ++ GaurdsCs ++ BodyCs  ++ AccCs, 
             PatPs ++ GaurdsPs ++ BodyPs  ++ AccPs}
-    end, {[],[],[],[]}, Clauses).
+    end, {[],[],[]}, Clauses).
+
+getTypesOfBodies(ClauseTs) -> lists:map(fun({_,BT}) -> BT end, ClauseTs).
 
 % check the types of the list comprehension defns (generators and filters)
 % te resulting env is used for type inference of the main expression in lc
