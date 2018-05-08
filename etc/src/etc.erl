@@ -74,7 +74,8 @@ typeCheckSCC(Functions,Env) ->
 
     
 
--spec infer(hm:env(), erl_syntax:syntaxTree()) -> {hm:type(),[hm:constraint()],[hm:predicate()]}.
+-spec infer(hm:env(), erl_syntax:syntaxTree()) -> 
+    {hm:type(),[hm:constraint()],[hm:predicate()]}.
 infer(_,{integer,L,_}) -> 
     X = hm:fresh(L),
     {X,[],[{class,"Num",X}]};
@@ -212,7 +213,8 @@ infer(Env,Node) ->
             ++ util:to_string(Node) ++ " with node type "++ util:to_string(X)})
     end.
 
--spec checkExpr(hm:env(), erl_syntax:syntaxTree()) -> {hm:env(),[hm:constraint()],[hm:predicate()]}.
+-spec checkExpr(hm:env(), erl_syntax:syntaxTree()) ->
+    {hm:env(),[hm:constraint()],[hm:predicate()]}.
 checkExpr(Env,{match,_,LNode,RNode}) ->
     {Env_, Cons1, Ps} = checkExpr(Env,LNode),
     {LType, Cons2, PsL} = infer(Env_,LNode),
@@ -236,11 +238,23 @@ checkExpr(Env,{cons,_,H,T}) ->
     {Env__,TCs,TPs} = checkExpr(Env_,T),
     {Env__,HCs ++ TCs, HPs ++ TPs};
 checkExpr(Env,ExprNode) -> 
-    {_,Constraints,Ps} = infer(Env, ExprNode),
-    {Env,Constraints,Ps}.
+    BranchClauses = 
+        case type (ExprNode) of
+            if_expr         -> erl_syntax:cond_expr_clauses(ExprNode);
+            case_expr       -> erl_syntax:case_expr_clauses(ExprNode);
+            receive_expr    -> erl_syntax:receive_expr_clauses(ExprNode);
+            _               -> []
+        end,
+    Env_ = lists:foldl(fun(Binding,AccEnv) ->
+        env:extend(Binding,hm:fresh(util:getLn(ExprNode)),AccEnv)
+    end, Env,commonBindings(BranchClauses)),
+    {_,Constraints,Ps} = infer(Env_, ExprNode),
+    {Env_,Constraints,Ps}.
+
 
 % infer the types of patterns in arguments of function definition
--spec inferPatterns(hm:env(),[erl_syntax:syntaxTree()]) -> {[hm:types()],hm:env(),[hm:constraint()],[hm:predicate()]}.
+-spec inferPatterns(hm:env(),[erl_syntax:syntaxTree()]) -> 
+    {[hm:types()],hm:env(),[hm:constraint()],[hm:predicate()]}.
 inferPatterns(Env,ClausePatterns) ->
     lists:foldl(
         fun(Pattern,{AccTs,AccEnv,AccCs,AccPs}) ->
@@ -251,26 +265,30 @@ inferPatterns(Env,ClausePatterns) ->
         end, {[],Env,[],[]} ,ClausePatterns).
 
 % infer the type of expression on the left of an application
--spec inferFn(hm:env(),erl_syntax:syntaxTree(),integer()) -> {hm:type(),[hm:constraint()],[hm:predicate()]}.
+-spec inferFn(hm:env(),erl_syntax:syntaxTree(),integer()) -> 
+    {hm:type(),[hm:constraint()],[hm:predicate()]}.
 inferFn(Env,{atom,L,X},ArgLen) ->
     {T, Ps} = lookup({X,ArgLen},Env,L), {T,[],Ps};
 inferFn(Env,X,_) ->
     infer(Env,X).
 
-
--spec checkGaurds(hm:env(),erl_syntax:syntaxTree()) -> {[hm:constraint()],[hm:predicate()]}.
+% check that the guards are all boolean
+-spec checkGaurds(hm:env(),erl_syntax:syntaxTree()) -> 
+    {[hm:constraint()],[hm:predicate()]}.
 checkGaurds(Env,{tree,disjunction,_,Conjuctions}) ->
     lists:foldr(fun({tree,conjunction,_,Exprs}, {DAccCs, DAccPs}) ->
         {Cs,Ps} = lists:foldr(fun(Expr,{CAccCs,CAccPs}) -> 
             {InfT,InfCs,InfPs} = infer(Env,Expr),
-            {unify(InfT,hm:bt(boolean,hm:getLn(InfT))) ++ InfCs ++ CAccCs, InfPs ++ CAccPs} 
+            { unify(InfT,hm:bt(boolean,hm:getLn(InfT))) ++ InfCs ++ CAccCs
+            , InfPs ++ CAccPs} 
         end, {[],[]}, Exprs),
         {Cs ++ DAccCs, Ps ++ DAccPs}
    end, {[],[]}, Conjuctions);
 checkGaurds(_,none) -> {[],[]}.
 
 % given a body of a clause, returns its type
--spec inferClauseBody(hm:env(),erl_syntax:syntaxTree()) -> {hm:type(),[hm:constraint()],[hm:predicate()]}.
+-spec inferClauseBody(hm:env(),erl_syntax:syntaxTree()) -> 
+    {hm:type(),[hm:constraint()],[hm:predicate()]}.
 inferClauseBody(Env,Body) -> 
     {Env_, CsBody, PsBody} = lists:foldl(
                     fun(Expr, {Ei,Csi,Psi}) -> 
@@ -304,7 +322,8 @@ getTypesOfBodies(ClauseTs) -> lists:map(fun({_,BT}) -> BT end, ClauseTs).
 
 % check the types of the list comprehension defns (generators and filters)
 % te resulting env is used for type inference of the main expression in lc
--spec checkLCDefs(hm:env(), [erl_syntax:syntaxTree()]) -> {hm:env(),[hm:constraint()],[hm:predicate()]}.
+-spec checkLCDefs(hm:env(), [erl_syntax:syntaxTree()]) -> 
+    {hm:env(),[hm:constraint()],[hm:predicate()]}.
 checkLCDefs(Env,Exprs) ->
     % fold over lc defs & accumulate env, cs & ps
     lists:foldl(fun(Expr,{AccEnv,AccCs,AccPs}) ->
@@ -351,14 +370,16 @@ unify(Type1,Type2) -> [{Type1,Type2}].
 -spec lookup(hm:tvar(),hm:env(),integer()) -> {hm:type(),[hm:predicate()]}.
 lookup(X,Env,L) ->
     case env:lookup(X,Env) of
-        undefined   -> erlang:error({type_error,util:to_string(X) ++ " not bound on line " ++ util:to_string(L)});
+        undefined   -> erlang:error({type_error,util:to_string(X) ++ 
+                            " not bound on line " ++ util:to_string(L)});
         T           -> hm:freshen(T)
     end.
 
 -spec lookupMulti(hm:tvar(),hm:env(),integer()) -> {[hm:type()],[hm:predicate()]}.
 lookupMulti(X,Env,L) ->
     case env:lookupMulti(X,Env) of
-        []   -> erlang:error({type_error,"Unbound constructor " ++ util:to_string(X) ++ " on line " ++ util:to_string(L)});
+        []   -> erlang:error({type_error,"Unbound constructor " ++ 
+                    util:to_string(X) ++ " on line " ++ util:to_string(L)});
         Ts           -> lists:foldr(fun(T,{AccTs,AccPs}) -> 
                             {FT,FPs} = hm:freshen(T),
                             {[FT|AccTs], FPs ++ AccPs}
@@ -394,5 +415,15 @@ getConstrTypes(Type,{type,_,union,DataConstrDefns}) ->
 -spec node2type(erl_syntax:syntaxTree()) -> hm:type().
 node2type({var,L,X}) -> hm:tvar(X,L);
 node2type({user_type,L,T,Args}) -> hm:tcon(T,lists:map(fun node2type/1, Args),L).
+
+% given a list branches, returns the common bindings in all of them
+-spec commonBindings([erl_syntax:syntaxTree()]) -> [var()].
+commonBindings(Clauses) ->
+    case Clauses of
+        [] -> [];
+        _  ->
+            BindingsList = lists:map(fun erl_syntax_lib:variables/1, Clauses),
+            sets:to_list(sets:intersection(BindingsList))
+    end.
 
 
