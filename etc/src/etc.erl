@@ -238,16 +238,18 @@ checkExpr(Env,{cons,_,H,T}) ->
     {Env__,TCs,TPs} = checkExpr(Env_,T),
     {Env__,HCs ++ TCs, HPs ++ TPs};
 checkExpr(Env,ExprNode) -> 
+    L = util:getLn(ExprNode),
     BranchClauses = 
         case type (ExprNode) of
-            if_expr         -> erl_syntax:cond_expr_clauses(ExprNode);
+            if_expr         -> erl_syntax:if_expr_clauses(ExprNode);
             case_expr       -> erl_syntax:case_expr_clauses(ExprNode);
             receive_expr    -> erl_syntax:receive_expr_clauses(ExprNode);
             _               -> []
         end,
-    Env_ = lists:foldl(fun(Binding,AccEnv) ->
-        env:extend(Binding,hm:fresh(util:getLn(ExprNode)),AccEnv)
-    end, Env,commonBindings(BranchClauses)),
+    % type check the common bindings to extend env
+    Env_ = lists:foldl(fun(X,AccEnv) ->
+        {AccEnv_,_,_} = checkExpr(AccEnv,{var,L,X}), AccEnv_
+    end, Env, commonBindings(BranchClauses)),
     {_,Constraints,Ps} = infer(Env_, ExprNode),
     {Env_,Constraints,Ps}.
 
