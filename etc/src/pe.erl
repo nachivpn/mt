@@ -4,36 +4,28 @@
 
 parse_transform(Forms,_) ->
     [Function] = pp:getFns(Forms),
-    try
-        io:fwrite("Function = ~p~n",[Function]),
-        reduce(Function,maps:new())
-    of
-        {Reduced,_}      -> io:fwrite("Reduced = ~p~n",[Reduced])
-    catch
-        error:Reason -> io:fwrite("Very bad error happened: ~p~n",[Reason])
-    end,
-    Forms.
+    io:fwrite("Function = ~p~n",[Function]),
+    {Reduced,_} = reduce(Function,maps:new()),
+    io:fwrite("Reduced = ~p~n",[Reduced]),
+   Forms.
 
 reduce({function,L,Name,Args,Clauses},Env) ->
     Clauses_ = lists:map(fun(C)-> element(1,reduce(C,Env)) end, Clauses),
     {{function,L,Name,Args,Clauses_},Env};
 reduce({clause,L,Patterns, Guards, Body},Env) ->
-    {Body_,_} = lists:foldl(fun(B,{AccPs,AccEnv}) ->
+    {Body1,_} = lists:foldl(fun(B,{AccPs,AccEnv}) ->
         {B_,AccEnv_} = reduce(B,AccEnv),
-        case B_ of  
-            % eliminate dead code
-            {none}  -> {AccPs, AccEnv_};
-            _       -> {AccPs ++ [B_],AccEnv_}   
-        end  
+        {AccPs ++ [B_],AccEnv_}   
     end, {[],Env}, Body),
-    {{clause,L,Patterns, Guards, Body_},Env};
+    Body2 = elimDeadBody(Body1),
+    {{clause,L,Patterns, Guards, Body2},Env};
 reduce({match,L,LExpr,RExpr},Env) ->
     {LExpr_,Env1} = reduce(LExpr,Env),
     {RExpr_,Env2} = reduce(RExpr,Env1),
     Sub = unify(LExpr_,RExpr_), 
     Env3 = maps:merge(Env2,Sub),
     case isStatic(RExpr_) of
-        true    -> {{none},Env3};
+        true    -> {RExpr_,Env3};
         false   -> {{match,L,LExpr_,RExpr_},Env3}
     end;
 reduce({cons,L,HExpr,TExpr},Env) ->
@@ -42,6 +34,12 @@ reduce({cons,L,HExpr,TExpr},Env) ->
     {{cons,L,HExpr_,TExpr_},Env2};
 reduce({nil,L},Env) ->
     {{nil,L},Env};
+reduce({tuple,L,Es},Env) ->
+    {Es_,Env_} = lists:foldl(fun(E,{AccEs,AccEnv}) ->
+        {E_,AccEnv_} = reduce(E,AccEnv),
+        {AccEs ++ [E_],AccEnv_}
+    end,{[],Env}, Es),
+    {{tuple,L,Es_},Env_};
 reduce({op,L,Op,E1,E2},Env) -> 
     {E1_,_} = reduce(E1,Env),
     {E2_,_} = reduce(E2,Env),
@@ -64,8 +62,10 @@ isStatic({integer,_,_}) -> true;
 isStatic({atom,_,_})    -> true;
 isStatic({string,_,_})  -> true;
 isStatic({nil,_})       -> true;
+isStatic({var,_,_})     -> false;
+isStatic({match,_,_,R}) -> isStatic(R);
 isStatic({cons,_,H,T})  -> isStatic(H) and isStatic(T);
-isStatic({var,_,_})  -> false.
+isStatic({tuple,_,Es})  -> lists:all(fun isStatic/1,Es).
 
 getMaxType(E1,E2) -> maxType(erl_syntax:type(E1),erl_syntax:type(E2)).
 
@@ -81,10 +81,24 @@ unify({cons,_,LH,LT},{cons,_,RH,RT}) ->
     RT_ = applySub(Sub1,RT),
     Sub2 = unify(LT_,RT_),
     comp(Sub2,Sub1);
-unify({var,_,X},R) -> maps:put(X,R,maps:new());
+unify({tuple,_,Es1},{tuple,_,Es2})   -> 
+    case length(Es1) == length(Es2) of
+        false -> erlang:error({pe_error,"Cannot unify tuples"});
+        true -> 
+            lists:foldl(fun({E1,E2},AccSub) ->
+                S = unify(applySub(AccSub,E1),applySub(AccSub,E2)),
+                comp(S,AccSub)
+            end, maps:new(), lists:zip(Es1,Es2))
+    end;
+unify({var,_,X},R)                  -> maps:put(X,R,maps:new());
 % TODO what if variable on R is not defined
-unify(L,R={var,_,_}) -> unify(R,L);
-unify({nil,_},{nil,_}) -> maps:new().
+unify(L,R={var,_,_})                -> unify(R,L);
+unify({nil,_},{nil,_})              -> maps:new();
+unify({integer,_,I},{integer,_,I})  -> maps:new();
+unify(_,_)                          -> 
+    erlang:error({pe_error,"Cannot unify patterns!"}).
+
+
 % unify(L,R) -> io:fwrite("L = ~p~nR = ~p",[L,R]).
 
 applySub(Sub,{cons,L,H,T}) -> {cons,L,applySub(Sub,H),applySub(Sub,T)};
@@ -96,3 +110,8 @@ comp (X,Y) ->
             fun(_,Type) -> applySub(X,Type) end, Y),
     maps:merge(X,Y_).   % union (Y_, entries in X whose keys are not in Y)
 
+elimDeadBody(Body) ->
+    lists:filter(
+        fun (B) -> not isStatic(B) end, 
+        lists:droplast(Body)) 
+    ++ [lists:last(Body)].
