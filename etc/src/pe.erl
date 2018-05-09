@@ -7,7 +7,7 @@ parse_transform(Forms,_) ->
     io:fwrite("Function = ~p~n",[Function]),
     {Reduced,_} = reduce(Function,maps:new()),
     io:fwrite("Reduced = ~p~n",[Reduced]),
-   Forms.
+    lists:sublist(Forms,3) ++ [Reduced] ++ lists:nthtail(4,Forms).
 
 reduce({function,L,Name,Args,Clauses},Env) ->
     Clauses_ = lists:map(fun(C)-> element(1,reduce(C,Env)) end, Clauses),
@@ -19,6 +19,26 @@ reduce({clause,L,Patterns, Guards, Body},Env) ->
     end, {[],Env}, Body),
     Body2 = elimDeadBody(Body1),
     {{clause,L,Patterns, Guards, Body2},Env};
+reduce({'if',L,Clauses},Env) ->
+    {_,Clauses_} = lists:foldl(
+    fun({clause,CL,Patterns,Guards,Body},{BranchFound,AccCs}) ->
+        if
+            % branch taken already, don't reduce further
+            BranchFound     -> {BranchFound,AccCs};
+            % branch not taken, reduce!
+            true            ->
+                Guards_ = reduceGuards(Guards,Env),
+                case Guards_ of
+                    % this branch evaluted to true, discard previous branches
+                    [[{atom,_,true}]]   -> {true,[{clause,CL,Patterns,Guards_,Body}]};
+                    % this branch evaluted to false, discard it
+                    [[{atom,_,false}]]  -> {false,AccCs};
+                    % this branch didn't evaluate to a value, accumulate reduced form
+                    _                   -> {false,AccCs ++ [{clause,CL,Patterns,Guards_,Body}]}
+                end
+        end
+    end ,{false,[]}, Clauses),
+    {{'if',L,Clauses_},Env};
 reduce({match,L,LExpr,RExpr},Env) ->
     {LExpr_,Env1} = reduce(LExpr,Env),
     {RExpr_,Env2} = reduce(RExpr,Env1),
@@ -51,11 +71,49 @@ reduce({op,L,Op,E1,E2},Env) ->
         false       -> 
             {ReducedExpr, Env}
     end;
+reduce({op,L,Op,E},Env) -> 
+    {E_,_} = reduce(E,Env),
+    ReducedExpr = {op,L,Op,E_},
+    case isStatic(E_)of
+        true        -> 
+            {value,V,_} = erl_eval:expr(ReducedExpr,[]),
+            {{erl_syntax:type(E_),L,V}, Env};
+        false       -> 
+            {ReducedExpr, Env}
+    end;
 reduce(E={var,_,X},Env)     -> {maps:get(X,Env,E),Env};
 reduce(E={float,_,_},Env)   -> {E, Env};
 reduce(E={integer,_,_},Env) -> {E, Env};
 reduce(E={string,_,_},Env)  -> {E, Env};
 reduce(E={atom,_,_},Env)    -> {E, Env}.
+
+
+reduceGuards(Disjunctions,Env) ->
+    Disjunctions_ = lists:foldr(fun(Conjunctions, DAccExprs) ->
+        Conjunctions_ = lists:foldr(fun(Expr,CAccExprs) ->
+            {Expr_,_} = reduce(Expr,Env),
+            [Expr_|CAccExprs]
+        end, [], Conjunctions),
+        case lists:all(fun isStatic/1,Conjunctions_) of    
+            true    -> 
+                Value = lists:all(fun getValue/1,Conjunctions_),
+                L = util:getLn(lists:nth(1,Conjunctions_)),
+                [[{atom,L,Value}]|DAccExprs];
+            false   -> [Conjunctions_|DAccExprs]
+        end
+   end, [], Disjunctions),
+   StaticDisjunctions = lists:all(
+        fun(D) -> length(D) == 1 
+            andalso isStatic(lists:nth(1,D)) 
+        end, Disjunctions_),
+   case StaticDisjunctions of    
+            true    -> 
+                Value = lists:any(fun(D) -> getValue(lists:nth(1,D)) end, Disjunctions_),
+                L = util:getLn(lists:nth(1,lists:nth(1,Disjunctions_))),
+                [[{atom,L,Value}]];
+            false   -> Disjunctions_
+    end.
+
 
 isStatic({float,_,_})   -> true;
 isStatic({integer,_,_}) -> true;
@@ -66,6 +124,9 @@ isStatic({var,_,_})     -> false;
 isStatic({match,_,_,R}) -> isStatic(R);
 isStatic({cons,_,H,T})  -> isStatic(H) and isStatic(T);
 isStatic({tuple,_,Es})  -> lists:all(fun isStatic/1,Es).
+
+getValue(V) -> element(3,V).
+
 
 getMaxType(E1,E2) -> maxType(erl_syntax:type(E1),erl_syntax:type(E2)).
 
@@ -95,11 +156,9 @@ unify({var,_,X},R)                  -> maps:put(X,R,maps:new());
 unify(L,R={var,_,_})                -> unify(R,L);
 unify({nil,_},{nil,_})              -> maps:new();
 unify({integer,_,I},{integer,_,I})  -> maps:new();
-unify(_,_)                          -> 
+unify(_,_)                          ->
     erlang:error({pe_error,"Cannot unify patterns!"}).
 
-
-% unify(L,R) -> io:fwrite("L = ~p~nR = ~p",[L,R]).
 
 applySub(Sub,{cons,L,H,T}) -> {cons,L,applySub(Sub,H),applySub(Sub,T)};
 applySub(Sub,{var,L,X}) -> maps:get(X,Sub,{var,L,X});
