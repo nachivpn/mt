@@ -260,10 +260,22 @@ checkExpr(Env,ExprNode) ->
 inferPatterns(Env,ClausePatterns) ->
     lists:foldl(
         fun(Pattern,{AccTs,AccEnv,AccCs,AccPs}) ->
-            % checkExpr takes care of extending the env w/ variables in a pattern
-            {Env_, ChCs, ChPs} = checkExpr(AccEnv,Pattern),
-            {InfT, InfCs, InfPs} = infer(Env_,Pattern),
-            {AccTs ++ [InfT], Env_, AccCs ++ ChCs ++ InfCs, AccPs ++ ChPs ++ InfPs }
+            case Pattern of
+                {match,_,LNode,RNode}   -> 
+                    {AccEnv1, LCs, LPs} = checkExpr(AccEnv,LNode),
+                    {AccEnv2, RCs, RPs} = checkExpr(AccEnv1,RNode),
+                    {InfLT, InfLCs, InfLPs} = infer(AccEnv2,LNode),
+                    {InfRT, InfRCs, InfRPs} = infer(AccEnv2,RNode),
+                    { AccTs ++ [InfRT]
+                    , AccEnv2
+                    , AccCs ++ LCs ++ RCs ++ unify(InfLT,InfRT) ++ InfLCs ++ InfRCs
+                    , AccPs ++ LPs ++ RPs ++ InfLPs ++ InfRPs};
+                _                       ->
+                    % checkExpr takes care of extending the env w/ variables in a pattern
+                    {Env_, ChCs, ChPs} = checkExpr(AccEnv,Pattern),
+                    {InfT, InfCs, InfPs} = infer(Env_,Pattern),
+                    {AccTs ++ [InfT], Env_, AccCs ++ ChCs ++ InfCs, AccPs ++ ChPs ++ InfPs }
+            end
         end, {[],Env,[],[]} ,ClausePatterns).
 
 % infer the type of expression on the left of an application
