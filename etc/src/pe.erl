@@ -52,25 +52,25 @@ reduce({tuple,L,Es},Env) ->
     end,{[],Env}, Es),
     {{tuple,L,Es_},Env_};
 reduce({op,L,Op,E1,E2},Env) -> 
-    {E1_,_} = reduce(E1,Env),
-    {E2_,_} = reduce(E2,Env),
+    {E1_,Env1} = reduce(E1,Env),
+    {E2_,Env2} = reduce(E2,Env1),
     ReducedExpr = {op,L,Op,E1_,E2_},
     case isStatic(E1_) and isStatic(E2_) of
         true        -> 
             {value,V,_} = erl_eval:expr(ReducedExpr,[]),
-            {{getMaxType(E1_,E2_),L,V}, Env};
+            {{getMaxType(E1_,E2_),L,V}, Env2};
         false       -> 
-            {ReducedExpr, Env}
+            {ReducedExpr, Env2}
     end;
 reduce({op,L,Op,E},Env) -> 
-    {E_,_} = reduce(E,Env),
+    {E_,Env_} = reduce(E,Env),
     ReducedExpr = {op,L,Op,E_},
     case isStatic(E_)of
         true        -> 
             {value,V,_} = erl_eval:expr(ReducedExpr,[]),
-            {{erl_syntax:type(E_),L,V}, Env};
+            {{erl_syntax:type(E_),L,V}, Env_};
         false       -> 
-            {ReducedExpr, Env}
+            {ReducedExpr, Env_}
     end;
 reduce(E={var,_,X},Env)     -> {maps:get(X,Env,E),Env};
 reduce(E={float,_,_},Env)   -> {E, Env};
