@@ -4,49 +4,40 @@
 
 parse_transform(Forms,_) ->
     [Function] = pp:getFns(Forms),
-    io:fwrite("Function = ~p~n",[Function]),
-    {Reduced,_} = reduce(Function,maps:new()),
-    io:fwrite("Reduced = ~p~n",[Reduced]),
+    Reduced = reduceTopFn(Function),
     lists:sublist(Forms,3) ++ [Reduced] ++ lists:nthtail(4,Forms).
 
-reduce({function,L,Name,Args,Clauses},Env) ->
-    Clauses_ = lists:map(fun(C)-> element(1,reduce(C,Env)) end, Clauses),
-    {{function,L,Name,Args,Clauses_},Env};
-reduce({clause,L,Patterns, Guards, Body},Env) ->
-    {Body1,_} = lists:foldl(fun(B,{AccPs,AccEnv}) ->
-        {B_,AccEnv_} = reduce(B,AccEnv),
-        {AccPs ++ [B_],AccEnv_}   
-    end, {[],Env}, Body),
-    Body2 = elimDeadBody(Body1),
-    {{clause,L,Patterns, Guards, Body2},Env};
+reduceTopFn({function,L,Name,Args,Clauses}) ->
+    Clauses_ = lists:map(
+        fun(C)-> reduceTopFunClause(C,maps:new()) end, Clauses),
+    {function,L,Name,Args,Clauses_}.
+
+reduceTopFunClause({clause,L,Patterns, Guards, Body},Env) ->
+    {Body_,_} = reduceClauseBody(Body,Env),
+    {clause,L,Patterns, Guards, Body_}.
+
 reduce({'if',L,Clauses},Env) ->
-    {_,Clauses_} = lists:foldl(
-    fun({clause,CL,Patterns,Guards,Body},{BranchFound,AccCs}) ->
-        if
-            % branch taken already, don't reduce further
-            BranchFound     -> {BranchFound,AccCs};
-            % branch not taken, reduce!
-            true            ->
-                Guards_ = reduceGuards(Guards,Env),
-                case Guards_ of
-                    % this branch evaluted to true, discard previous branches
-                    [[{atom,_,true}]]   -> {true,[{clause,CL,Patterns,Guards_,Body}]};
-                    % this branch evaluted to false, discard it
-                    [[{atom,_,false}]]  -> {false,AccCs};
-                    % this branch didn't evaluate to a value, accumulate reduced form
-                    _                   -> {false,AccCs ++ [{clause,CL,Patterns,Guards_,Body}]}
-                end
-        end
-    end ,{false,[]}, Clauses),
-    {{'if',L,Clauses_},Env};
+    Clauses_ = reduceClauses(Clauses,Env),
+    case Clauses_ of
+        [{clause,_,_,[[{atom,_,true}]],[Expr_]}] -> {Expr_,Env};
+        _         -> {{'if',L,Clauses_},Env}
+    end;
 reduce({match,L,LExpr,RExpr},Env) ->
     {LExpr_,Env1} = reduce(LExpr,Env),
     {RExpr_,Env2} = reduce(RExpr,Env1),
     Sub = unify(LExpr_,RExpr_), 
     Env3 = maps:merge(Env2,Sub),
-    case isStatic(RExpr_) of
+    % this is important to preserve call by value semantics
+    case isValue(RExpr_) of
+        % since the RHS is a value, 
+        % we return the value (which may or may not be used upstream)
+        % it is safe to return the new env (containing substitution)
         true    -> {RExpr_,Env3};
-        false   -> {{match,L,LExpr_,RExpr_},Env3}
+        % the RHS is not a value, we must simply 
+        % return the old env and reduced match expr (because it is simpler)
+        % new env is "unsafe" cz it contains
+        % substitution with non-value exprs (i.e., possibly effectful)
+        false   -> {{match,L,LExpr_,RExpr_},Env}
     end;
 reduce({cons,L,HExpr,TExpr},Env) ->
     {HExpr_,Env1} = reduce(HExpr,Env),
@@ -88,6 +79,44 @@ reduce(E={string,_,_},Env)  -> {E, Env};
 reduce(E={atom,_,_},Env)    -> {E, Env}.
 
 
+reduceClause({clause,CL,Patterns,Guards,Body},Env) ->
+    Guards_  = reduceGuards(Guards,Env),
+    {Body_,_} = reduceClauseBody(Body,Env),
+    {{clause,CL,Patterns,Guards_,Body_},Env}.
+
+reduceClauses(Clauses,Env) ->
+    Clauses1 = lists:map(fun(C) -> element(1,reduceClause(C,Env))end,Clauses),
+    IsTrueGuard = fun({clause,_,_,Guards,_}) -> 
+        case Guards of [[{atom,_,X}]]  -> X;
+                        _               -> false
+        end end,
+    IsDynamicGuard = fun({clause,_,_,Guards,_}) -> 
+        case Guards of  [[{atom,_,_}]]  -> false;
+                        _               -> true
+        end end,
+    % remove false clauses
+    Clauses2 = lists:filter(fun(C) -> IsTrueGuard(C) or IsDynamicGuard(C) end, Clauses1),
+    % take the first true clause
+    {_,Clauses3} = lists:foldl(fun(C,{BranchFound,AccCs}=Acc) ->
+        case BranchFound of
+            true -> Acc;
+            false ->
+                case length(AccCs) == 0 andalso IsTrueGuard(C) of
+                    true ->     {true,[C]};
+                    false ->    {false,AccCs ++ [C]}
+                end
+        end
+    end,{false,[]},Clauses2),
+    Clauses3.
+
+reduceClauseBody(Body,Env) ->
+    {Body1,_} = lists:foldl(fun(B,{AccPs,AccEnv}) ->
+        {B_,AccEnv_} = reduce(B,AccEnv),
+        {AccPs ++ [B_],AccEnv_}
+    end, {[],Env}, Body),
+    Body2 = elimDeadBody(Body1),
+    {Body2,Env}.
+
 reduceGuards(Disjunctions,Env) ->
     Disjunctions_ = lists:foldr(fun(Conjunctions, DAccExprs) ->
         Conjunctions_ = lists:foldr(fun(Expr,CAccExprs) ->
@@ -123,7 +152,9 @@ isStatic({nil,_})       -> true;
 isStatic({var,_,_})     -> false;
 isStatic({match,_,_,R}) -> isStatic(R);
 isStatic({cons,_,H,T})  -> isStatic(H) and isStatic(T);
-isStatic({tuple,_,Es})  -> lists:all(fun isStatic/1,Es).
+isStatic({tuple,_,Es})  -> lists:all(fun isStatic/1,Es);
+isStatic(_)  -> false.
+
 
 getValue(V) -> element(3,V).
 
@@ -169,8 +200,20 @@ comp (X,Y) ->
             fun(_,Type) -> applySub(X,Type) end, Y),
     maps:merge(X,Y_).   % union (Y_, entries in X whose keys are not in Y)
 
+isValue({float,_,_})    -> true;
+isValue({integer,_,_})  -> true;
+isValue({atom,_,_})     -> true;
+isValue({string,_,_})   -> true;
+isValue({nil,_})        -> true;
+isValue({var,_,_})      -> true;
+isValue({cons,_,_,_})   -> true;
+isValue({tuple,_,_})    -> true;
+isValue({op,_,_,E})    -> isValue(E);
+isValue({op,_,_,E1,E2}) -> isValue(E1) and isValue(E2);
+isValue(_) -> false.
+
 elimDeadBody(Body) ->
     lists:filter(
-        fun (B) -> not isStatic(B) end, 
+        fun (B) -> not isValue(B) end, 
         lists:droplast(Body)) 
     ++ [lists:last(Body)].
