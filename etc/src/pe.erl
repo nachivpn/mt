@@ -46,10 +46,17 @@ reduce({match,L,LExpr,RExpr},Env) ->
     Env3 = maps:merge(Env2,Sub),
     % this is important to preserve call by value semantics
     case isValue(RExpr_) of
-        % since the RHS is a value, 
-        % we return the value (which may or may not be used upstream)
+        % since the RHS is known to be a value, 
         % it is safe to return the new env (containing substitution)
-        true    -> {RExpr_,Env3};
+        true ->
+            case matches(LExpr_,RExpr_) of
+                % the expression matches at spec time, hence is pointless to retain
+                % we return the value (which may or may not be used upstream)
+                true    -> {RExpr_,Env3};
+                % match not known at spec time, leave the expression
+                % as pattern match may fail at run-time
+                false   -> {{match,L,LExpr_,RExpr_},Env3}
+            end;
         % the RHS is not a value, we must simply 
         % return the old env and reduced match expr (because it is simpler)
         % new env is "unsafe" cz it contains
