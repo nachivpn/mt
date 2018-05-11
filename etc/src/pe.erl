@@ -209,7 +209,12 @@ unify({tuple,_,Es1},{tuple,_,Es2})   ->
                 comp(S,AccSub)
             end, maps:new(), lists:zip(Es1,Es2))
     end;
-unify({var,_,X},R)                  -> maps:put(X,R,maps:new());
+unify({var,_,X},{var,_,X})          -> maps:new();
+unify({var,_,X},R)                  ->
+    case occurs(X,R) of
+        true -> erlang:error({pe_error,unification,"occurs check!"});
+        false -> maps:put(X,R,maps:new())
+    end;
 % TODO what if variable on R is not defined
 unify(L,R={var,_,_})                -> unify(R,L);
 unify({nil,_},{nil,_})              -> maps:new();
@@ -246,6 +251,11 @@ matches({string,_,S},{string,_,S})   -> true;
 matches({float,_,F},{float,_,F})     -> true;
 matches(_,_)                         -> false.
 
+
+occurs(X,{cons,_,H,T})  -> occurs(X,H) or occurs(X,T);
+occurs(X,{tuple,_,Es})  -> lists:any(fun(E) -> occurs(X,E) end, Es);
+occurs(X,{var,_,X})     -> true;
+occurs(_,_)             -> false.
 
 %%%%%%%%%%%%%%%%%%%%%%%%
 %%%%%%% Utilities
