@@ -13,14 +13,31 @@ reduceTopFn({function,L,Name,Args,Clauses}) ->
     {function,L,Name,Args,Clauses_}.
 
 reduceTopFunClause({clause,L,Patterns, Guards, Body},Env) ->
-    {Body_,_} = reduceClauseBody(Body,Env),
+    Body_ = reduceClauseBody(Body,Env),
     {clause,L,Patterns, Guards, Body_}.
 
+
+reduce({'case',L,MainExpr,Clauses},Env) ->
+    {MainExpr_,_}   = reduce(MainExpr,Env),
+    % reduce clauses to static values for elimination
+    Clauses1        = lists:map(fun(C) -> reduceClause(C,Env) end, Clauses),
+    % eliminate branches known to be dead
+    Clauses2        = filterCaseClauses(Clauses1,MainExpr_,Env),
+    ReducedCase     = {'case',L,MainExpr_,Clauses2},
+    case Clauses2 of
+        % only one branch is left, take it!
+        [{clause,_,_,[[{atom,_,true}]],[Expr_]}]    -> {Expr_,Env};
+        % only one branch is left, take it!
+        [{clause,_,_,[],[Expr_]}]                   -> {Expr_,Env};
+        % more than one branch is left, return reduced case expr
+        _                                           -> {ReducedCase,Env}
+    end;
 reduce({'if',L,Clauses},Env) ->
-    Clauses_ = reduceClauses(Clauses,Env),
-    case Clauses_ of
+    Clauses1 = lists:map(fun(C) -> reduceClause(C,Env) end, Clauses),
+    Clauses2 = filterIfClauses(Clauses1),
+    case Clauses2 of
         [{clause,_,_,[[{atom,_,true}]],[Expr_]}] -> {Expr_,Env};
-        _         -> {{'if',L,Clauses_},Env}
+        _         -> {{'if',L,Clauses2},Env}
     end;
 reduce({match,L,LExpr,RExpr},Env) ->
     {LExpr_,Env1} = reduce(LExpr,Env),
@@ -80,44 +97,25 @@ reduce(E={atom,_,_},Env)    -> {E, Env}.
 
 
 reduceClause({clause,CL,Patterns,Guards,Body},Env) ->
-    Guards_  = reduceGuards(Guards,Env),
-    {Body_,_} = reduceClauseBody(Body,Env),
-    {{clause,CL,Patterns,Guards_,Body_},Env}.
-
-reduceClauses(Clauses,Env) ->
-    Clauses1 = lists:map(fun(C) -> element(1,reduceClause(C,Env))end,Clauses),
-    IsTrueGuard = fun({clause,_,_,Guards,_}) -> 
-        case Guards of [[{atom,_,X}]]  -> X;
-                        _               -> false
-        end end,
-    IsDynamicGuard = fun({clause,_,_,Guards,_}) -> 
-        case Guards of  [[{atom,_,_}]]  -> false;
-                        _               -> true
-        end end,
-    % remove false clauses
-    Clauses2 = lists:filter(fun(C) -> IsTrueGuard(C) or IsDynamicGuard(C) end, Clauses1),
-    % take the first true clause
-    {_,Clauses3} = lists:foldl(fun(C,{BranchFound,AccCs}=Acc) ->
-        case BranchFound of
-            true -> Acc;
-            false ->
-                case length(AccCs) == 0 andalso IsTrueGuard(C) of
-                    true ->     {true,[C]};
-                    false ->    {false,AccCs ++ [C]}
-                end
-        end
-    end,{false,[]},Clauses2),
-    Clauses3.
+    Patterns_ = reduceClausePatterns(Patterns,Env),
+    Guards_  = reduceClauseGuards(Guards,Env),
+    Body_ = reduceClauseBody(Body,Env),
+    {clause,CL,Patterns_,Guards_,Body_}.
 
 reduceClauseBody(Body,Env) ->
     {Body1,_} = lists:foldl(fun(B,{AccPs,AccEnv}) ->
         {B_,AccEnv_} = reduce(B,AccEnv),
         {AccPs ++ [B_],AccEnv_}
     end, {[],Env}, Body),
-    Body2 = elimDeadBody(Body1),
-    {Body2,Env}.
+    elimDeadBody(Body1).
 
-reduceGuards(Disjunctions,Env) ->
+reduceClausePatterns(Patterns,Env) ->
+    lists:foldl(fun(P,AccPs) ->
+        {P_,_} = reduce(P,Env),
+        AccPs ++ [P_]
+    end, [], Patterns).
+
+reduceClauseGuards(Disjunctions,Env) ->
     Disjunctions_ = lists:foldr(fun(Conjunctions, DAccExprs) ->
         Conjunctions_ = lists:foldr(fun(Expr,CAccExprs) ->
             {Expr_,_} = reduce(Expr,Env),
@@ -131,10 +129,10 @@ reduceGuards(Disjunctions,Env) ->
             false   -> [Conjunctions_|DAccExprs]
         end
    end, [], Disjunctions),
-   StaticDisjunctions = lists:all(
-        fun(D) -> length(D) == 1 
-            andalso isStatic(lists:nth(1,D)) 
-        end, Disjunctions_),
+   StaticDisjunctions = length(Disjunctions_) > 0 
+        andalso lists:all(fun(D) -> length(D) == 1 
+                    andalso isStatic(lists:nth(1,D)) 
+                end, Disjunctions_),
    case StaticDisjunctions of    
             true    -> 
                 Value = lists:any(fun(D) -> getValue(lists:nth(1,D)) end, Disjunctions_),
@@ -143,30 +141,52 @@ reduceGuards(Disjunctions,Env) ->
             false   -> Disjunctions_
     end.
 
+filterIfClauses([])           -> [];
+filterIfClauses([C|Cs])       ->
+    case C of
+        {clause,_,_,[[{atom,_,true}]],_}    -> [C];
+        {clause,_,_,[[{atom,_,false}]],_}   -> filterIfClauses(Cs);
+        _                                   -> [C] ++ filterIfClauses(Cs)
+    end.
 
-isStatic({float,_,_})   -> true;
-isStatic({integer,_,_}) -> true;
-isStatic({atom,_,_})    -> true;
-isStatic({string,_,_})  -> true;
-isStatic({nil,_})       -> true;
-isStatic({var,_,_})     -> false;
-isStatic({match,_,_,R}) -> isStatic(R);
-isStatic({cons,_,H,T})  -> isStatic(H) and isStatic(T);
-isStatic({tuple,_,Es})  -> lists:all(fun isStatic/1,Es);
-isStatic(_)  -> false.
+filterCaseClauses([],_,_)         -> [];
+filterCaseClauses([{clause,_,[Pattern],_,_}=C|Cs],MainExpr,Env) ->
+    try 
+        % unify to obtain susbtitution for pattern 
+        % in terms of main expr (order matters!)
+        unify(Pattern,MainExpr)
+    of
+        SubEnv ->
+            % reduce the clause in new sub env.
+            % note that clause is reduced for 2nd time, 
+            % as filter gets only reduced clauses
+            C_ = reduceClause(C,SubEnv),
+            {clause,_,[Pattern_],Guards_,_} = C_,
+            case {matches(Pattern_,MainExpr),Guards_} of
+                % pattern matches (no guards), take it and keep only this!
+                {true,[]}    -> [C_];
+                % pattern matches and guard evaluates to true, keep only this
+                {true,[[{atom,_,true}]]}    -> [C_];
+                % pattern matches, but guard evaluates to false, discard
+                {true,[[{atom,_,false}]]}   -> filterCaseClauses(Cs,MainExpr,Env);
+                % pattern matches does not match at spec. time OR
+                % guard doesn't evaluate to true/false at spec. time -- gotta keep it
+                _                           -> [C_] ++ filterCaseClauses(Cs,MainExpr,Env)
+            end
+    catch
+        error:{pe_error,unification,_} -> 
+            filterCaseClauses(Cs,MainExpr,Env)
+    end.
 
 
-getValue(V) -> element(3,V).
 
 
-getMaxType(E1,E2) -> maxType(erl_syntax:type(E1),erl_syntax:type(E2)).
 
-maxType(integer  ,integer)   -> integer;
-maxType(integer  ,float)     -> float;
-maxType(float    ,integer)   -> float;
-maxType(float    ,float)     -> float;
-maxType(T        ,T)         -> T.
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%% Pattern matching
+%%%%%%%%%%%%%%%%%%%%%%%% 
 
+% unify two patterns
 unify({cons,_,LH,LT},{cons,_,RH,RT}) -> 
     Sub1 = unify(LH,RH),
     LT_ = applySub(Sub1,LT),
@@ -175,7 +195,7 @@ unify({cons,_,LH,LT},{cons,_,RH,RT}) ->
     comp(Sub2,Sub1);
 unify({tuple,_,Es1},{tuple,_,Es2})   -> 
     case length(Es1) == length(Es2) of
-        false -> erlang:error({pe_error,"Cannot unify tuples"});
+        false -> erlang:error({pe_error,unification,"Cannot unify tuples"});
         true -> 
             lists:foldl(fun({E1,E2},AccSub) ->
                 S = unify(applySub(AccSub,E1),applySub(AccSub,E2)),
@@ -187,9 +207,12 @@ unify({var,_,X},R)                  -> maps:put(X,R,maps:new());
 unify(L,R={var,_,_})                -> unify(R,L);
 unify({nil,_},{nil,_})              -> maps:new();
 unify({integer,_,I},{integer,_,I})  -> maps:new();
-unify(_,_)                          ->
-    erlang:error({pe_error,"Cannot unify patterns!"}).
-
+unify({atom,_,A},{atom,_,A})        -> maps:new();
+unify({string,_,S},{string,_,S})    -> maps:new();
+unify({float,_,F},{float,_,F})      -> maps:new();
+unify(X,Y)                          ->
+    erlang:error({pe_error,unification,"Cannot unify patterns: " 
+    ++ util:to_string(X) ++ " and " ++ util:to_string(Y)}).
 
 applySub(Sub,{cons,L,H,T}) -> {cons,L,applySub(Sub,H),applySub(Sub,T)};
 applySub(Sub,{var,L,X}) -> maps:get(X,Sub,{var,L,X});
@@ -200,18 +223,60 @@ comp (X,Y) ->
             fun(_,Type) -> applySub(X,Type) end, Y),
     maps:merge(X,Y_).   % union (Y_, entries in X whose keys are not in Y)
 
+% Do the given patterns match during specialization time?
+matches({cons,_,LH,LT},{cons,_,RH,RT}) -> 
+    matches(LH,RH) and matches(LT,RT);
+matches({tuple,_,Es1},{tuple,_,Es2})   -> 
+    length(Es1) == length(Es2) 
+        andalso
+    lists:all(
+        fun({E1,E2}) -> matches(E1,E2) end,lists:zip(Es1,Es2));
+matches({var,_,_},{var,_,_})         -> true;
+matches({nil,_},{nil,_})             -> true;
+matches({integer,_,I},{integer,_,I}) -> true;
+matches({atom,_,A},{atom,_,A})       -> true;
+matches({string,_,S},{string,_,S})   -> true;
+matches({float,_,F},{float,_,F})     -> true;
+matches(_,_)                         -> false.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%% Utilities
+%%%%%%%%%%%%%%%%%%%%%%%% 
+
+% is the given node a known (static) value?
+isStatic({float,_,_})   -> true;
+isStatic({integer,_,_}) -> true;
+isStatic({atom,_,_})    -> true;
+isStatic({string,_,_})  -> true;
+isStatic({nil,_})       -> true;
+isStatic({var,_,_})     -> false;
+isStatic({cons,_,H,T})  -> isStatic(H) and isStatic(T);
+isStatic({tuple,_,Es})  -> lists:all(fun isStatic/1,Es);
+isStatic(_)  -> false.
+
+% is the given node a (static or dynamic) value?
 isValue({float,_,_})    -> true;
 isValue({integer,_,_})  -> true;
 isValue({atom,_,_})     -> true;
 isValue({string,_,_})   -> true;
 isValue({nil,_})        -> true;
 isValue({var,_,_})      -> true;
-isValue({cons,_,_,_})   -> true;
-isValue({tuple,_,_})    -> true;
-isValue({op,_,_,E})    -> isValue(E);
-isValue({op,_,_,E1,E2}) -> isValue(E1) and isValue(E2);
+isValue({cons,_,H,T})   -> isValue(H) and isValue(T); 
+isValue({tuple,_,Es})   -> lists:all(fun isValue/1, Es);
 isValue(_) -> false.
 
+getValue(V) -> element(3,V).
+
+getMaxType(E1,E2) -> maxType(erl_syntax:type(E1),erl_syntax:type(E2)).
+
+maxType(integer  ,integer)   -> integer;
+maxType(integer  ,float)     -> float;
+maxType(float    ,integer)   -> float;
+maxType(float    ,float)     -> float;
+maxType(T        ,T)         -> T.
+
+% eliminate dangling values in a expression (list) body
 elimDeadBody(Body) ->
     lists:filter(
         fun (B) -> not isValue(B) end, 
