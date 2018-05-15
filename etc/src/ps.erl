@@ -60,13 +60,14 @@ solveOcPs(Ps) ->
     % exhaustively search all oc predicates for common substitutions
     Sub1                 = deduceCommonSubst(Unsolved0),
     Unsolved1            = subPs(Unsolved0,Sub1),
-    {comp(Sub1,Sub0),Unsolved1}.
+    Unsolved2            = reduceOcps(Unsolved1),
+    {comp(Sub1,Sub0),Unsolved2}.
 
 % takes a sub and a list of predicates
 % returns a sub (obtained by solving predicates) and a list of unsolvable predicates
 -spec uniSolveOcPs(hm:sub(),[hm:predicate()]) -> {hm:sub(),[hm:predicate()]}.
 uniSolveOcPs(GivenSub,GivenPs) ->
-    Reduced = nubOcPs(shrinkCandidates(GivenPs)),
+    Reduced = reduceOcps(GivenPs),
     Solveable = lists:any(fun solveableOcP/1, Reduced),
     if
         Solveable -> 
@@ -89,7 +90,15 @@ uniSolveOcPs(GivenSub,GivenPs) ->
         true -> {GivenSub,Reduced}
     end.
 
-% returns the same number of predicates, only reduces length of candaides
+% reduces the ocps by shrinking, simplifying and removing duplicates
+-spec reduceOcps([hm:predicate()]) -> [hm:predicate()].
+reduceOcps(Ps) -> 
+    Ps0 = shrinkCandidates(Ps),
+    Ps1 = lists:map(fun simplifyOcp/1, Ps0),
+    nubOcPs(Ps1).
+
+% returns the same number of predicates, only reduces length of candidates
+% removes the un-unifiable candidate types
 -spec shrinkCandidates([hm:predicate()]) -> [hm:predicate()].
 shrinkCandidates(Ps) ->
     lists:map(fun(P) ->
@@ -107,6 +116,30 @@ shrinkCandidates(Ps) ->
         end
     end, Ps).
 
+% if the constructor arg types and the args of candidates match,
+% then the args are thrown away because they will 
+% simply unify to yield an empty subtitution
+-spec simplifyOcp(hm:predicate()) -> hm:predicate().
+simplifyOcp({oc,CT,MTs}=OriginalOcp) ->
+    case CT of
+        {funt,_,CArgs,CReturnType}  ->
+            % if the arguments of the constructor and all candidate types are equal
+            EqArgs = lists:all(fun({funt,_,MTArgs,_}) ->
+                util:eqLists(fun hm:eqType/2,CArgs,MTArgs)
+            end, MTs),
+            % then, simply throw the args away and retain only the return types
+            case EqArgs of
+                true -> 
+                    MRTs = lists:map(fun({funt,_,_,ReturnType}) -> ReturnType end,MTs),
+                    {oc,CReturnType,MRTs};
+                false -> 
+                    OriginalOcp
+            end;
+        _                           ->
+            OriginalOcp
+    end;
+simplifyOcp(X) -> X.
+
 % Is a given OC predicate solveable?
 -spec solveableOcP(hm:predicate()) -> boolean().
 solveableOcP({oc,_,[_]}) -> true;
@@ -118,6 +151,7 @@ solveableOcP(_) -> false.
 solveOcP({oc,CT,[MT]})   -> {just,unify(CT,MT)};
 solveOcP(_)              -> {nothing}.
 
+% remove duplicate occurences of the oc predicate from a list
 -spec nubOcPs([hm:predicate()]) -> [hm:predicate()].
 nubOcPs(Ps) ->
     lists:foldl(fun(P,AccPs) ->
