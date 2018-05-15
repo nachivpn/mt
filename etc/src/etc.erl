@@ -428,6 +428,9 @@ getConstrTypes(Type,{type,_,union,DataConstrDefns}) ->
 % converts a type (node) in the AST to a hm:type()
 -spec node2type(erl_syntax:syntaxTree()) -> hm:type().
 node2type({var,L,X}) -> hm:tvar(X,L);
+node2type({type,L,T,[]}) -> hm:bt(T,L);
+node2type({type,L,tuple,Args}) -> hm:tcon("Tuple",lists:map(fun node2type/1, Args),L);
+node2type({type,L,list,Args}) -> hm:tcon("List",lists:map(fun node2type/1, Args),L);
 node2type({user_type,L,T,Args}) -> hm:tcon(T,lists:map(fun node2type/1, Args),L).
 
 % given a list branches, returns the common bindings in all of them

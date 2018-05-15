@@ -325,11 +325,29 @@ prettify(Env, {tvar, _, A}) ->
             Env
     end;
 prettify(Env, {tcon, _, N, As}) ->
-    io:fwrite("~s ", [N]),
-    util:interFoldEffect(
-        fun(A,E) -> prettify(E,A) end
-        , fun() -> io:fwrite(" ") end
-        , Env, As);
+    case N of   
+        "List" ->
+            io:fwrite("["),
+            E = util:interFoldEffect(
+            fun(A,E) -> prettify(E,A) end
+            , fun() -> io:fwrite(" ") end
+            , Env, As),
+            io:fwrite("]"),E;
+        "Tuple" ->
+            io:fwrite("{"),
+            E = util:interFoldEffect(
+            fun(A,E) -> prettify(E,A) end
+            , fun() -> io:fwrite(" ") end
+            , Env, As),
+            io:fwrite("}"),E;
+        _       -> 
+            io:fwrite("~s ", [N]),
+            util:interFoldEffect(
+            fun(A,E) -> prettify(E,A) end
+            , fun() -> io:fwrite(" ") end
+            , Env, As)
+    end
+;
 prettify(Env,{forall, T, Ps, A}) ->
     io:fwrite("all ",[]),
     Env1 = prettify(Env, T),
