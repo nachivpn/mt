@@ -38,14 +38,20 @@ reduce({call,L,{atom,L,FunName},Args},Env) ->
     case lists:all(fun isStatic/1,Args_) of
         % then, inline
         true ->
-            % get called function body
-            Fun = maps:get({FunName,length(Args_)},Env#pen.funs),
-            % rename variables
-            {_,{'fun',LF,{clauses,Clauses}}} = scp_expr:alpha_convert(#env{},Fun),
-            % filter matching clauses
-            Clauses_ = filterClauses(Clauses,Args_,Env),
-            ReducedFun = {'fun',LF,{clauses,Clauses_}},
-            {decideClause(Clauses_,L,ReducedFun),Env};
+            try
+                % get called function body
+                Fun = maps:get({FunName,length(Args_)},Env#pen.funs),
+                % rename variables
+                {_,{'fun',LF,{clauses,Clauses}}} = scp_expr:alpha_convert(#env{},Fun),
+                % filter matching clauses
+                Clauses_ = filterClauses(Clauses,Args_,Env),
+                ReducedFun = {'fun',LF,{clauses,Clauses_}},
+                {decideClause(Clauses_,L,ReducedFun),Env}
+            catch
+                error:{pe_error,no_match, Reason} ->
+                    erlang:error("When evaluating function call on line " 
+                    ++ util:to_string(L) ++ ", no_match occured: " ++ Reason)
+            end;
         % else, leave call as it is
         false ->
             {{call,L,{atom,L,FunName},Args_},Env}
@@ -209,6 +215,7 @@ filterClauses([{clause,_,Patterns,_,_}=C|Cs],Args,Env) ->
 % else, return the 3rd argument (ReducedExpr)
 decideClause(Clauses,L,ReducedExpr) ->
     case Clauses of
+        []  -> erlang:error({pe_error,no_match, "No matching clause on line " ++ util:to_string(L)});
         % only one branch is left, take it! (singl expr body)
         [{clause,_,_,[[{atom,_,true}]],[Expr_]}]    -> Expr_;
         [{clause,_,_,[],[Expr_]}]                   -> Expr_;
