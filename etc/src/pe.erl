@@ -113,8 +113,13 @@ reduce({op,L,Op,E1,E2},Env) ->
     ReducedExpr = {op,L,Op,E1_,E2_},
     case isStatic(E1_) and isStatic(E2_) of
         true        -> 
-            {value,V,_} = erl_eval:expr(ReducedExpr,[]),
-            {{getMaxType(E1_,E2_),L,V}, Env2};
+            try
+                erl_eval:expr(ReducedExpr,[])
+            of
+                {value,V,_} -> {{getMaxType(E1_,E2_),L,V}, Env2}
+            catch
+                error:_ -> {ReducedExpr, Env2}
+            end;
         false       -> 
             {ReducedExpr, Env2}
     end;
@@ -123,8 +128,13 @@ reduce({op,L,Op,E},Env) ->
     ReducedExpr = {op,L,Op,E_},
     case isStatic(E_)of
         true        -> 
-            {value,V,_} = erl_eval:expr(ReducedExpr,[]),
-            {{erl_syntax:type(E_),L,V}, Env_};
+            try
+                erl_eval:expr(ReducedExpr,[])
+            of
+                {value,V,_} -> {{erl_syntax:type(E_),L,V}, Env_}
+            catch
+                error:_ -> {ReducedExpr, Env_}
+            end;
         false       -> 
             {ReducedExpr, Env_}
     end;
