@@ -1,28 +1,65 @@
 -module(pe).
 -export([parse_transform/2]).
+-include_lib("erlscp/src/scp.hrl").
 
+% Partial evaluation ENvironment
+-record(pen, 
+    {   vars    %map of variable => value
+    ,   funs    %map of {funName,Arity} => FunctionNode
+    }).
 
 parse_transform(Forms,_) ->
-    [Function] = pp:getFns(Forms),
-    Reduced = reduceTopFn(Function),
-    lists:sublist(Forms,3) ++ [Reduced] ++ lists:nthtail(4,Forms).
+    FunEnv = lists:foldl(fun(F,Map) ->
+        case F of
+            {function,_,Name,ArgLen,_} ->
+                % convert top level function to fun value
+                Fun = scp_expr:function_to_fun(F), 
+                maps:put({Name,ArgLen},Fun,Map) ;
+            _   -> Map
+        end
+    end, maps:new(), Forms),
+    pp:fmapPEFns(fun(Function) -> 
+        reduceTopFn(Function,#pen{vars = maps:new(),funs = FunEnv}) 
+    end, Forms).
 
-reduceTopFn({function,L,Name,Args,Clauses}) ->
+reduceTopFn({function,L,Name,Args,Clauses},Env) ->
     Clauses_ = lists:map(
-        fun(C)-> reduceTopFunClause(C,maps:new()) end, Clauses),
+        fun(C)-> reduceTopFunClause(C,Env) end, Clauses),
     {function,L,Name,Args,Clauses_}.
 
 reduceTopFunClause({clause,L,Patterns, Guards, Body},Env) ->
     Body_ = reduceClauseBody(Body,Env),
     {clause,L,Patterns, Guards, Body_}.
-
-
+    
+reduce({call,L,{atom,L,FunName},Args},Env) ->
+    % reduce all the arguments
+    Args_ = lists:map(fun(A) -> element(1,reduce(A,Env)) end,Args),
+    % if the all arguments are static
+    case lists:all(fun isStatic/1,Args_) of
+        % then, inline
+        true ->
+            % get called function body
+            Fun = maps:get({FunName,length(Args_)},Env#pen.funs),
+            % rename variables
+            {_,{'fun',LF,{clauses,Clauses}}} = scp_expr:alpha_convert(#env{},Fun),
+            % filter matching clauses
+            Clauses_ = filterClauses(Clauses,Args_,Env),
+            ReducedFun = {'fun',LF,{clauses,Clauses_}},
+            case Clauses_ of
+                [{clause,_,_,[[{atom,_,true}]],[Expr_]}]    -> {Expr_,Env};
+                [{clause,_,_,[],[Expr_]}]                   -> {Expr_,Env};
+                _                                           -> {ReducedFun,Env}
+            end;
+        % else, leave call as it is
+        false ->
+            {{call,L,{atom,L,FunName},Args_},Env}
+    end;
 reduce({'case',L,MainExpr,Clauses},Env) ->
     {MainExpr_,_}   = reduce(MainExpr,Env),
     % reduce clauses to static values for elimination
     Clauses1        = lists:map(fun(C) -> reduceClause(C,Env) end, Clauses),
     % eliminate branches known to be dead
-    Clauses2        = filterCaseClauses(Clauses1,MainExpr_,Env),
+    Clauses2        = filterClauses(Clauses1,[MainExpr_],Env),
     ReducedCase     = {'case',L,MainExpr_,Clauses2},
     case Clauses2 of
         % only one branch is left, take it!
@@ -34,7 +71,7 @@ reduce({'case',L,MainExpr,Clauses},Env) ->
     end;
 reduce({'if',L,Clauses},Env) ->
     Clauses1 = lists:map(fun(C) -> reduceClause(C,Env) end, Clauses),
-    Clauses2 = filterIfClauses(Clauses1),
+    Clauses2 = filterClauses(Clauses1,[],Env),
     case Clauses2 of
         [{clause,_,_,[[{atom,_,true}]],[Expr_]}] -> {Expr_,Env};
         _         -> {{'if',L,Clauses2},Env}
@@ -43,7 +80,7 @@ reduce({match,L,LExpr,RExpr},Env) ->
     {LExpr_,Env1} = reduce(LExpr,Env),
     {RExpr_,Env2} = reduce(RExpr,Env1),
     Sub = unify(LExpr_,RExpr_), 
-    Env3 = maps:merge(Env2,Sub),
+    Env3 = Env2#pen{vars=maps:merge(Env2#pen.vars,Sub)},
     % this is important to preserve call by value semantics
     case isValue(RExpr_) of
         % since the RHS is known to be a value, 
@@ -96,7 +133,7 @@ reduce({op,L,Op,E},Env) ->
         false       -> 
             {ReducedExpr, Env_}
     end;
-reduce(E={var,_,X},Env)     -> {maps:get(X,Env,E),Env};
+reduce(E={var,_,X},Env)     -> {maps:get(X,Env#pen.vars,E),Env};
 reduce(E={float,_,_},Env)   -> {E, Env};
 reduce(E={integer,_,_},Env) -> {E, Env};
 reduce(E={string,_,_},Env)  -> {E, Env};
@@ -148,44 +185,35 @@ reduceClauseGuards(Disjunctions,Env) ->
             false   -> Disjunctions_
     end.
 
-filterIfClauses([])           -> [];
-filterIfClauses([C|Cs])       ->
-    case C of
-        {clause,_,_,[[{atom,_,true}]],_}    -> [C];
-        {clause,_,_,[[{atom,_,false}]],_}   -> filterIfClauses(Cs);
-        _                                   -> [C] ++ filterIfClauses(Cs)
-    end.
-
-filterCaseClauses([],_,_)         -> [];
-filterCaseClauses([{clause,_,[Pattern],_,_}=C|Cs],MainExpr,Env) ->
+filterClauses([],_,_)         -> [];
+filterClauses([{clause,_,Patterns,_,_}=C|Cs],Args,Env) ->
     try 
         % unify to obtain susbtitution for pattern 
         % in terms of main expr (order matters!)
-        unify(Pattern,MainExpr)
+        unifyMany(Patterns,Args)
     of
         SubEnv ->
             % reduce the clause in new sub env.
             % note that clause is reduced for 2nd time, 
             % as filter gets only reduced clauses
-            C_ = reduceClause(C,SubEnv),
-            {clause,_,[Pattern_],Guards_,_} = C_,
-            case {matches(Pattern_,MainExpr),Guards_} of
+            C_ = reduceClause(C,Env#pen{vars=SubEnv}),
+            {clause,_,Patterns_,Guards_,_} = C_,
+            Matches = lists:all(fun({P,A}) -> matches(P,A) end,lists:zip(Patterns_,Args)),
+            case {Matches,Guards_} of
                 % pattern matches (no guards), take it and keep only this!
                 {true,[]}    -> [C_];
                 % pattern matches and guard evaluates to true, keep only this
                 {true,[[{atom,_,true}]]}    -> [C_];
                 % pattern matches, but guard evaluates to false, discard
-                {true,[[{atom,_,false}]]}   -> filterCaseClauses(Cs,MainExpr,Env);
+                {true,[[{atom,_,false}]]}   -> filterClauses(Cs,Args,Env);
                 % pattern matches does not match at spec. time OR
                 % guard doesn't evaluate to true/false at spec. time -- gotta keep it
-                _                           -> [C_] ++ filterCaseClauses(Cs,MainExpr,Env)
+                _                           -> [C_] ++ filterClauses(Cs,Args,Env)
             end
     catch
         error:{pe_error,unification,_} -> 
-            filterCaseClauses(Cs,MainExpr,Env)
+            filterClauses(Cs,Args,Env)
     end.
-
-
 
 
 
@@ -226,6 +254,15 @@ unify(X,Y)                          ->
     erlang:error({pe_error,unification,"Cannot unify patterns: " 
     ++ util:to_string(X) ++ " and " ++ util:to_string(Y)}).
 
+unifyMany([],[])            -> maps:new();
+unifyMany([],_)             -> erlang:error({pe_error, unification, "arg_mismatch"});
+unifyMany(_,[])             -> erlang:error({pe_error, unification, "arg_mismatch"});
+unifyMany ([A0|As],[B0|Bs])   ->
+    Sub = unify(A0,B0),
+    As_ = lists:map(fun(A1) -> applySub(Sub,A1) end, As),
+    Bs_ = lists:map(fun(B1) -> applySub(Sub,B1) end, Bs),
+    comp(unifyMany(As_,Bs_),Sub).
+
 applySub(Sub,{cons,L,H,T}) -> {cons,L,applySub(Sub,H),applySub(Sub,T)};
 applySub(Sub,{var,L,X}) -> maps:get(X,Sub,{var,L,X});
 applySub(_,E) -> E.
@@ -243,13 +280,14 @@ matches({tuple,_,Es1},{tuple,_,Es2})   ->
         andalso
     lists:all(
         fun({E1,E2}) -> matches(E1,E2) end,lists:zip(Es1,Es2));
-matches({var,_,_},{var,_,_})         -> true;
-matches({nil,_},{nil,_})             -> true;
-matches({integer,_,I},{integer,_,I}) -> true;
-matches({atom,_,A},{atom,_,A})       -> true;
-matches({string,_,S},{string,_,S})   -> true;
-matches({float,_,F},{float,_,F})     -> true;
-matches(_,_)                         -> false.
+% a dynamic variable matches a (static or dynamic) value
+matches({var,_,_},V)                    -> isValue(V);
+matches({nil,_},{nil,_})                -> true;
+matches({integer,_,I},{integer,_,I})    -> true;
+matches({atom,_,A},{atom,_,A})          -> true;
+matches({string,_,S},{string,_,S})      -> true;
+matches({float,_,F},{float,_,F})        -> true;
+matches(_,_)                            -> false.
 
 
 occurs(X,{cons,_,H,T})  -> occurs(X,H) or occurs(X,T);
