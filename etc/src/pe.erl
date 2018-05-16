@@ -6,9 +6,10 @@
 -record(pen, 
     {   vars    %map of variable => value
     ,   funs    %map of {funName,Arity} => FunctionNode
+    ,   beast   %boolean indicating if PE should be aggresive
     }).
 
-parse_transform(Forms,_) ->
+parse_transform(Forms,Options) ->
     FunEnv = lists:foldl(fun(F,Map) ->
         case F of
             {function,_,Name,ArgLen,_} ->
@@ -18,8 +19,9 @@ parse_transform(Forms,_) ->
             _   -> Map
         end
     end, maps:new(), Forms),
+    BeastMode = lists:member('beast',Options),
     pp:fmapPEFns(fun(Function) -> 
-        reduceTopFn(Function,#pen{vars = maps:new(),funs = FunEnv}) 
+        reduceTopFn(Function,#pen{vars = maps:new(),funs = FunEnv,beast = BeastMode})
     end, Forms).
 
 reduceTopFn({function,L,Name,Args,Clauses},Env) ->
@@ -34,8 +36,12 @@ reduceTopFunClause({clause,L,Patterns, Guards, Body},Env) ->
 reduce({call,L,{atom,L,FunName},Args},Env) ->
     % reduce all the arguments
     Args_ = lists:map(fun(A) -> element(1,reduce(A,Env)) end,Args),
-    % if the all arguments are static
-    case lists:all(fun isStatic/1,Args_) of
+    CriteriaFun = case Env#pen.beast of
+        true -> fun isValue/1;
+        false -> fun isStatic/1 
+    end,
+    % if all arguments pass criteria
+    case lists:all(CriteriaFun,Args_) of
         % then, inline
         true ->
             try
