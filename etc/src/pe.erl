@@ -45,11 +45,7 @@ reduce({call,L,{atom,L,FunName},Args},Env) ->
             % filter matching clauses
             Clauses_ = filterClauses(Clauses,Args_,Env),
             ReducedFun = {'fun',LF,{clauses,Clauses_}},
-            case Clauses_ of
-                [{clause,_,_,[[{atom,_,true}]],[Expr_]}]    -> {Expr_,Env};
-                [{clause,_,_,[],[Expr_]}]                   -> {Expr_,Env};
-                _                                           -> {ReducedFun,Env}
-            end;
+            {decideClause(Clauses_,L,ReducedFun),Env};
         % else, leave call as it is
         false ->
             {{call,L,{atom,L,FunName},Args_},Env}
@@ -61,21 +57,14 @@ reduce({'case',L,MainExpr,Clauses},Env) ->
     % eliminate branches known to be dead
     Clauses2        = filterClauses(Clauses1,[MainExpr_],Env),
     ReducedCase     = {'case',L,MainExpr_,Clauses2},
-    case Clauses2 of
-        % only one branch is left, take it!
-        [{clause,_,_,[[{atom,_,true}]],[Expr_]}]    -> {Expr_,Env};
-        % only one branch is left, take it!
-        [{clause,_,_,[],[Expr_]}]                   -> {Expr_,Env};
-        % more than one branch is left, return reduced case expr
-        _                                           -> {ReducedCase,Env}
-    end;
+    {decideClause(Clauses2,L,ReducedCase),Env};
 reduce({'if',L,Clauses},Env) ->
-    Clauses1 = lists:map(fun(C) -> reduceClause(C,Env) end, Clauses),
-    Clauses2 = filterClauses(Clauses1,[],Env),
-    case Clauses2 of
-        [{clause,_,_,[[{atom,_,true}]],[Expr_]}] -> {Expr_,Env};
-        _         -> {{'if',L,Clauses2},Env}
-    end;
+    % reduce clauses to static values for elimination
+    Clauses1    = lists:map(fun(C) -> reduceClause(C,Env) end, Clauses),
+    % eliminate branches known to be dead
+    Clauses2    = filterClauses(Clauses1,[],Env),
+    ReducedIf   = {'if',L,Clauses2}, 
+    {decideClause(Clauses2,L,ReducedIf),Env};
 reduce({match,L,LExpr,RExpr},Env) ->
     {LExpr_,Env1} = reduce(LExpr,Env),
     {RExpr_,Env2} = reduce(RExpr,Env1),
@@ -215,6 +204,20 @@ filterClauses([{clause,_,Patterns,_,_}=C|Cs],Args,Env) ->
             filterClauses(Cs,Args,Env)
     end.
 
+% given a list of reduced clauses,
+% if only one matching clause is available, return its body
+% else, return the 3rd argument (ReducedExpr)
+decideClause(Clauses,L,ReducedExpr) ->
+    case Clauses of
+        % only one branch is left, take it! (singl expr body)
+        [{clause,_,_,[[{atom,_,true}]],[Expr_]}]    -> Expr_;
+        [{clause,_,_,[],[Expr_]}]                   -> Expr_;
+        % only one branch is left, take it! (multiple expr body)
+        [{clause,_,_,[[{atom,_,true}]],Exprs_}]     -> {block,L,Exprs_};
+        [{clause,_,_,[],Exprs_}]                    -> {block,L,Exprs_};
+        % more than one branch is left, return reduced expr
+        _                                           -> ReducedExpr
+    end.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%
