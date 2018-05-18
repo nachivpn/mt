@@ -7,6 +7,7 @@
     {   vars    %map of variable => value
     ,   funs    %map of {funName,Arity} => FunctionNode
     ,   beast   %boolean indicating if PE should be aggresive
+    ,   bound
     }).
 
 parse_transform(Forms,Options) ->
@@ -30,7 +31,10 @@ reduceTopFn({function,L,Name,Args,Clauses},Env) ->
     {function,L,Name,Args,Clauses_}.
 
 reduceTopFunClause({clause,L,Patterns, Guards, Body},Env) ->
-    Body_ = reduceClauseBody(Body,Env),
+    BoundArgVars = lists:foldr(fun(P,AccSet) ->
+        sets:union(AccSet,erl_syntax_lib:variables(P))
+    end,sets:new(), Patterns), 
+    Body_ = reduceClauseBody(Body,Env#pen{bound = BoundArgVars}),
     {clause,L,Patterns, Guards, Body_}.
     
 reduce({call,L,{atom,L,FunName},Args},Env) ->
@@ -79,7 +83,9 @@ reduce({'if',L,Clauses},Env) ->
     {decideClause(Clauses2,L,ReducedIf),Env};
 reduce({match,L,LExpr,RExpr},Env) ->
     {LExpr_,Env1} = reduce(LExpr,Env),
-    {RExpr_,Env2} = reduce(RExpr,Env1),
+    % add all variables on left expr to bound (seen)
+    Env1_ = Env1#pen{bound=sets:union(Env1#pen.bound,erl_syntax_lib:variables(LExpr_))},
+    {RExpr_,Env2} = reduce(RExpr,Env1_),
     Sub = unify(LExpr_,RExpr_), 
     Env3 = Env2#pen{vars=maps:merge(Env2#pen.vars,Sub)},
     % this is important to preserve call by value semantics
@@ -203,23 +209,27 @@ filterClauses([{clause,_,Patterns,_,_}=C|Cs],Args,Env) ->
         % in terms of main expr (order matters!)
         unifyMany(Patterns,Args)
     of
-        SubEnv ->
+        Sub ->
             % reduce the clause in new sub env.
             % note that clause is reduced for 2nd time, 
             % as filter gets only reduced clauses
-            C_ = reduceClause(C,Env#pen{vars=SubEnv}),
-            {clause,_,Patterns_,Guards_,_} = C_,
+            SubEnv = Env#pen{vars=Sub},
+            C1 = reduceClause(C,SubEnv),
+            {clause,L,Patterns_,Guards_,Body_} = C1,
+            % add corresponding match statements for newly bound variables in patterns
+            BindingMatches = scopeNewVarsIn(Patterns_,SubEnv,L),
+            C2 = {clause,L,Patterns_,Guards_, BindingMatches ++ Body_},
             Matches = lists:all(fun({P,A}) -> matches(P,A) end,lists:zip(Patterns_,Args)),
             case {Matches,Guards_} of
                 % pattern matches (no guards), take it and keep only this!
-                {true,[]}    -> [C_];
+                {true,[]}    -> [C2];
                 % pattern matches and guard evaluates to true, keep only this
-                {true,[[{atom,_,true}]]}    -> [C_];
+                {true,[[{atom,_,true}]]}    -> [C2];
                 % pattern matches, but guard evaluates to false, discard
                 {true,[[{atom,_,false}]]}   -> filterClauses(Cs,Args,Env);
                 % pattern matches does not match at spec. time OR
                 % guard doesn't evaluate to true/false at spec. time -- gotta keep it
-                _                           -> [C_] ++ filterClauses(Cs,Args,Env)
+                _                           -> [C2] ++ filterClauses(Cs,Args,Env)
             end
     catch
         error:{pe_error,unification,_} -> 
@@ -363,3 +373,24 @@ elimDeadBody(Body) ->
         fun (B) -> not isValue(B) end, 
         lists:droplast(Body)) 
     ++ [lists:last(Body)].
+
+unboundVars(Node,Env) ->
+    sets:subtract(erl_syntax_lib:variables(Node),Env#pen.bound).
+
+getBindingMatch(Vars,Env,L) ->
+    IsBoundBy = fun({_,Expr}) -> 
+        sets:is_subset(Vars,erl_syntax_lib:variables(Expr))
+    end,
+    case util:find(IsBoundBy, maps:to_list(Env#pen.vars)) of
+        {just,{X,Expr}} -> {match,L,Expr,{var,L,X}};
+        {nothing}       -> erlang:error("no binding match")
+    end.
+
+scopeNewVarsIn(Patterns_,SubEnv,L) ->
+    lists:foldl(fun(P,AccMatches) ->
+                UnboundVars = unboundVars(P,SubEnv),
+                case sets:size(UnboundVars) > 0 of
+                    true -> [getBindingMatch(UnboundVars,SubEnv,L)|AccMatches];
+                    false -> AccMatches
+                end
+    end, [],Patterns_).
