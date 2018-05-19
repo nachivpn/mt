@@ -349,20 +349,22 @@ prettify(Env, {tcon, _, N, As}) ->
     end
 ;
 prettify(Env,{forall, T, Ps, A}) ->
-    io:fwrite("all ",[]),
-    Env1 = prettify(Env, T),
-    io:fwrite("[",[]),
-    Env2 = lists:foldl(fun(P, AccEnv) ->
-        case P of
-            {class,C,T_} -> 
-                io:fwrite("~s ",[C]),
-                AccEnv_ = prettify(AccEnv, T_),
-                io:fwrite(";",[]),
-                AccEnv_
-        end
-    end, Env1, Ps),
-    io:fwrite("].",[]),
-    prettify(Env2, A);
+    case Ps of
+        [] -> prettify(Env, A);
+        _ ->
+            io:fwrite("[",[]),
+            Env2 = lists:foldl(fun(P, AccEnv) ->
+                case P of
+                    {class,C,T_} -> 
+                        io:fwrite("~s ",[C]),
+                        AccEnv_ = prettify(AccEnv, T_),
+                        io:fwrite(";",[]),
+                        AccEnv_
+                end
+            end, Env, Ps),
+            io:fwrite("].",[]),
+            prettify(Env2, A)
+    end;
 prettify(Env,{whilst,Ps,A}) ->
     Env1 = lists:foldl(fun(P, AccEnv) ->
         case P of

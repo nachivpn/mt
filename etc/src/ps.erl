@@ -95,7 +95,7 @@ uniSolveOcPs(GivenSub,GivenPs) ->
 reduceOcps(Ps) -> 
     Ps0 = shrinkCandidates(Ps),
     Ps1 = lists:map(fun simplifyOcp/1, Ps0),
-    nubOcPs(Ps1).
+    nubPs(Ps1).
 
 % returns the same number of predicates, only reduces length of candidates
 % removes the un-unifiable candidate types
@@ -151,13 +151,6 @@ solveableOcP(_) -> false.
 solveOcP({oc,CT,[MT]})   -> {just,unify(CT,MT)};
 solveOcP(_)              -> {nothing}.
 
-% remove duplicate occurences of the oc predicate from a list
--spec nubOcPs([hm:predicate()]) -> [hm:predicate()].
-nubOcPs(Ps) ->
-    lists:foldl(fun(P,AccPs) ->
-        addToOcPSet(P,AccPs)
-    end,[],Ps).
-
 -spec deduceCommonSubst([hm:predicate()]) -> hm:sub().
 deduceCommonSubst(Ps) ->
     Subs = deduceCommonSubst(emptySub(),Ps),
@@ -208,18 +201,27 @@ maybeUnify(TypeA,TypeB) ->
         error:{type_error,_} -> {nothing}
     end.
 
--spec addToOcPSet(hm:predicate(),[hm:predicate()]) -> [hm:predicate()].
-addToOcPSet(Px,[P|Ps]=PPs) -> 
-    case eqOcp(Px,P) of
-        true    -> PPs;
-        false   -> [P|addToOcPSet(Px,Ps)]
-    end;
-addToOcPSet(Px,[]) -> [Px].
+% remove duplicate occurences of the oc predicate from a list
+-spec nubPs([hm:predicate()]) -> [hm:predicate()].
+nubPs(Ps) ->
+    lists:foldl(fun(P,AccPs) ->
+        addToPSet(P,AccPs)
+    end,[],Ps).
 
--spec eqOcp(hm:predicate(),hm:predicate()) -> boolean().
-eqOcp({oc,CT1,MTs1},{oc,CT2,MTs2}) -> 
+-spec addToPSet(hm:predicate(),[hm:predicate()]) -> [hm:predicate()].
+addToPSet(Px,[P|Ps]=PPs) -> 
+    case eqP(Px,P) of
+        true    -> PPs;
+        false   -> [P|addToPSet(Px,Ps)]
+    end;
+addToPSet(Px,[]) -> [Px].
+
+-spec eqP(hm:predicate(),hm:predicate()) -> boolean().
+eqP({oc,CT1,MTs1},{oc,CT2,MTs2}) -> 
     eqType(CT1,CT2) andalso util:eqLists(fun hm:eqType/2,MTs1,MTs2);
-eqOcp(_,_) -> false.
+eqP({class,C,T1},{class,C,T2}) ->
+    eqType(T1,T2);
+eqP(_,_) -> false.
 
 % returns a subtitution which is an intersection of a list of substitutions
 -spec intersectSub([hm:sub()]) -> hm:sub().
