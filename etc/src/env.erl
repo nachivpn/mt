@@ -2,7 +2,8 @@
 -export([empty/0,lookup/2,extend/3,free/2
         ,is_bound/2,fmapV/2,lookupMulti/2,default/0
         ,freeInEnv/1,length/1
-        ,dumpModuleBindings/2,readModuleBindings/1]).
+        ,dumpModuleBindings/2,readModuleBindings/1
+        ,lookupRemote/3]).
 -export_type([env/0]).
 
 % Type checker ENvironment
@@ -47,3 +48,10 @@ readModuleBindings(Module) ->
     InterfaceFile = lists:concat([Module,".ei"]),
     {ok, Data} = file:read_file(InterfaceFile),
     erlang:binary_to_term(Data).
+
+lookupRemote(Module,X,_) ->
+    InterfaceFile = lists:concat([Module,".ei"]),
+    case filelib:is_regular(InterfaceFile)of
+        true -> lookup(X,#ten{bindings = readModuleBindings(Module)});
+        false -> na
+    end.

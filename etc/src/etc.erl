@@ -285,6 +285,8 @@ inferPatterns(Env,ClausePatterns) ->
     {hm:type(),[hm:constraint()],[hm:predicate()]}.
 inferFn(Env,{atom,L,X},ArgLen) ->
     {T, Ps} = lookup({X,ArgLen},Env,L), {T,[],Ps};
+inferFn(Env,{remote,L,{atom,_,Module},{atom,_,X}},ArgLen) ->
+    {T, Ps} = lookupRemote({X,ArgLen},Env,L,Module), {T,[],Ps};
 inferFn(Env,X,_) ->
     infer(Env,X).
 
@@ -390,6 +392,20 @@ lookup(X,Env,L) ->
                             " not bound on line " ++ util:to_string(L)});
         T           -> hm:freshen(T)
     end.
+
+lookupRemote(X,Env,L,Module) ->
+    case env:lookupRemote(Module,X,Env) of
+        undefined   ->
+             erlang:error({type_error,util:to_string(X) ++ 
+                            " on line " ++ util:to_string(L) ++ 
+                            " is not exported by module " ++ util:to_string(Module)});
+        na          ->
+            {_,ArgLen} = X,
+            ArgTypes = lists:map(fun hm:fresh/1, lists:duplicate(ArgLen,L)),
+            {hm:funt(ArgTypes,hm:fresh(L),L),[]};
+        T           -> hm:freshen(T)
+    end.
+
 
 -spec lookupMulti(hm:tvar(),hm:env(),integer()) -> {[hm:type()],[hm:predicate()]}.
 lookupMulti(X,Env,L) ->
