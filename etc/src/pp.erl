@@ -1,6 +1,6 @@
 -module(pp).
 % Pre-processor
--export([eraseAnn/1,getUDTs/1,getFns/1,fmapPEFns/2]).
+-export([eraseAnn/1,getUDTs/1,getFns/1,fmapPEFns/2,getModule/1]).
 
 eraseAnn(Forms) ->
     lists:filter(fun(F) ->
@@ -28,3 +28,5 @@ getFns([_|Forms]) ->
 fmapPEFns(Fun,[]) -> [];
 fmapPEFns(Fun,[{attribute,_,etc,pe}|[F|Forms]]) -> [Fun(F) | fmapPEFns(Fun,Forms)];
 fmapPEFns(Fun,[F|Forms]) -> [F | fmapPEFns(Fun,Forms)].
+
+getModule(Forms) -> {attribute,_,module,Name} = lists:nth(2,Forms),Name.

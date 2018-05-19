@@ -1,7 +1,8 @@
 -module(env).
 -export([empty/0,lookup/2,extend/3,free/2
         ,is_bound/2,fmapV/2,lookupMulti/2,default/0
-        ,freeInEnv/1,length/1,moduleBindings/1]).
+        ,freeInEnv/1,length/1
+        ,dumpModuleBindings/2,readModuleBindings/1]).
 -export_type([env/0]).
 
 % Type checker ENvironment
@@ -37,4 +38,12 @@ freeInEnv (Env) ->
 
 length(Env) -> erlang:length(Env#ten.bindings).
 
-moduleBindings(Env) -> Env#ten.bindings -- (env:default())#ten.bindings.
+dumpModuleBindings(Env,Module) ->
+    InterfaceFile = lists:concat([Module,".eti"]),
+    ModuleBindings = Env#ten.bindings -- (env:default())#ten.bindings,
+    file:write_file(InterfaceFile,erlang:term_to_binary(ModuleBindings)).
+
+readModuleBindings(Module) ->
+    InterfaceFile = lists:concat([Module,".eti"]),
+    {ok, Data} = file:read_file(InterfaceFile),
+    erlang:binary_to_term(Data).

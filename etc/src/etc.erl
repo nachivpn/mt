@@ -33,11 +33,13 @@ parse_transform(Forms,_) ->
         end, Env, SCCs)
     of  
         Env_ -> 
+            Module = pp:getModule(Forms),
+            env:dumpModuleBindings(Env_,Module),
             lists:map(fun({X,T}) -> 
                 io:fwrite("~p :: ",[X]), 
                 hm:pretty(T), 
                 io:fwrite("~n",[])
-            end, env:moduleBindings(Env_))
+            end, env:readModuleBindings(Module))
     catch
         error:{type_error,Reason} -> erlang:error("Type Error: " ++ Reason)
     end,
