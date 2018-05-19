@@ -19,3 +19,5 @@ rebar3.crashdump
 test*.erl
 erly
 rebar.lock
+*.eti
+*.P
