@@ -39,11 +39,11 @@ freeInEnv (Env) ->
 length(Env) -> erlang:length(Env#ten.bindings).
 
 dumpModuleBindings(Env,Module) ->
-    InterfaceFile = lists:concat([Module,".eti"]),
+    InterfaceFile = lists:concat([Module,".ei"]),
     ModuleBindings = Env#ten.bindings -- (env:default())#ten.bindings,
     file:write_file(InterfaceFile,erlang:term_to_binary(ModuleBindings)).
 
 readModuleBindings(Module) ->
-    InterfaceFile = lists:concat([Module,".eti"]),
+    InterfaceFile = lists:concat([Module,".ei"]),
     {ok, Data} = file:read_file(InterfaceFile),
     erlang:binary_to_term(Data).
