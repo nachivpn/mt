@@ -21,7 +21,7 @@ parse_transform(Forms,_) ->
     % add UDTs to default env
     Env = lists:foldl(fun(UDT,AccEnv) -> 
         addUDTNode(UDT,AccEnv) 
-    end, rt:defaultEnv(), UDTs),
+    end, env:default(), UDTs),
     % get all functions
     Functions = pp:getFns(Forms),
     % make strongly connected components (SCCs) (sorted in topological ordering)
@@ -37,7 +37,7 @@ parse_transform(Forms,_) ->
                 io:fwrite("~p :: ",[X]), 
                 hm:pretty(T), 
                 io:fwrite("~n",[])
-            end, lists:reverse(Env_))
+            end, env:moduleBindings(Env_))
     catch
         error:{type_error,Reason} -> erlang:error("Type Error: " ++ Reason)
     end,

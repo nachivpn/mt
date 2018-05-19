@@ -1,15 +1,14 @@
 -module(hm).
 -export([solve/1,solvePreds/2]).
 -export([unify/2]).
--export([emptySub/0,comp/2,subE/2,subT/2,subP/2,subPs/2]).
+-export([emptySub/0,comp/2,subE/2,subT/2,subP/2,subPs/2,free/1]).
 -export([bt/2,funt/3,tvar/2,tcon/3,forall/4]).
 -export([freshen/1,generalize/3,eqType/2,fresh/1]).
 -export([getLn/1,pretty/1,prettyCs/2,prettify/2]).
--export_type([constraint/0,env/0,type/0]).
+-export_type([constraint/0,type/0]).
 
 
 -type tvar() :: any().
--type env() :: [{tvar(),type()}].
 -type sub() :: maps:map(). % Map <tvar(),type()>
 
 -type constraint() :: {type(), type()}.
@@ -178,9 +177,9 @@ subP ({oc,T,MatcingTypes},S) ->
 -spec subPs([predicate()], sub()) -> predicate().
 subPs (Ps,S) -> lists:map(fun(P) -> subP(P,S) end, Ps).
 
-% Repetitive substution on a environment
--spec subE(env(), sub()) -> env().
-subE (Env,S) -> env:mapV(fun(T) -> subT(T,S) end, Env).
+% Repetitive substution on an environment
+-spec subE(env:env(), sub()) -> env:env().
+subE (Env,S) -> env:fmapV(fun(T) -> subT(T,S) end, Env).
 
 -spec occurs(tvar(), type()) -> boolean().
 occurs (V,{funt, _, As, B}) ->
@@ -210,12 +209,6 @@ free ({forall, {tvar, _, X}, _, A})
                         -> sets:del_element(X, free(A));
 free ({whilst,_,T})         -> free(T).
 
--spec freeInEnv(env()) -> set:set(tvar()).
-freeInEnv (VTs) ->
-    lists:foldr(
-            fun sets:union/2,
-            sets:new(),
-            lists:map(fun({_,T}) -> free(T) end, VTs)).
 
 -spec freeInPs([predicate()]) -> set:set(tvar()).
 freeInPs(Ps) ->
@@ -231,10 +224,10 @@ freeInPs(Ps) ->
         end, sets:new(), Ps).
 
 % converts a mono type to a poly type
--spec generalize(type(),env(),[predicate()]) -> type().
+-spec generalize(type(),env:env(),[predicate()]) -> type().
 generalize (Type,Env,Ps) ->
     MonoVars = sets:union(free(Type),freeInPs(Ps)),
-    BoundInEnv = freeInEnv(Env),
+    BoundInEnv = env:freeInEnv(Env),
     % Generalizable variables of a type are
     % monotype variables that are not bound in environment
     Generalizable = sets:subtract(MonoVars, BoundInEnv),
@@ -298,7 +291,7 @@ solvePreds(Premise,Ps) -> ps:psMain(Premise,Ps).
 %%%%%%%%%%%%%%%%%%%%
 % pretty :: Type -> IO
 pretty(T) -> 
-    prettify([],T),
+    prettify(env:empty(),T),
     ok.
 
 % Stateful pretty printer
@@ -317,7 +310,7 @@ prettify(Env, {tvar, _, A}) ->
     X = env:lookup(A, Env),
     case X of
         undefined -> 
-            L = length(Env) + 65,
+            L = env:length(Env) + 65,
             io:fwrite("~c", [L]),
             env:extend(A,L,Env);       
         _         -> 
