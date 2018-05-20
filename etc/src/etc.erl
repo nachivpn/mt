@@ -101,6 +101,10 @@ infer(_,{var,L,'_'}) ->
 infer(Env,{var, L, X}) ->
     {T, Ps} = lookup(X, Env, L),
     {T, [], Ps};
+infer(Env,{call,L,{atom,_,is_function},[F,{integer,_,Arity}]}) ->
+    {TF,CsF,PsF} = infer(Env,F),
+    ArgTypes = lists:map(fun hm:fresh/1, lists:duplicate(Arity,L)),
+    {hm:bt(boolean,L),CsF ++ unify(TF, hm:funt(ArgTypes,hm:fresh(L),L)),PsF};
 infer(Env,{call,L,F,Args}) ->
     {T1,Cs1,Ps1} = inferFn(Env,F,length(Args)),   
     {T2,Cs2,Ps2} = lists:foldl(
@@ -388,9 +392,12 @@ unify(Type1,Type2) -> [{Type1,Type2}].
 -spec lookup(hm:tvar(),hm:env(),integer()) -> {hm:type(),[hm:predicate()]}.
 lookup(X,Env,L) ->
     case env:lookup(X,Env) of
-        undefined   -> erlang:error({type_error,util:to_string(X) ++ 
-                            " not bound on line " ++ util:to_string(L)});
-        T           -> hm:freshen(T)
+        undefined   -> 
+            erlang:error({type_error,util:to_string(X) ++ 
+                " not bound on line " ++ util:to_string(L)});
+        T           -> 
+            {FT,Ps} = hm:freshen(T),
+            {hm:replaceLn(FT,0,L),Ps}
     end.
 
 lookupRemote(X,Env,L,Module) ->
@@ -403,7 +410,9 @@ lookupRemote(X,Env,L,Module) ->
             {_,ArgLen} = X,
             ArgTypes = lists:map(fun hm:fresh/1, lists:duplicate(ArgLen,L)),
             {hm:funt(ArgTypes,hm:fresh(L),L),[]};
-        T           -> hm:freshen(T)
+        T           -> 
+            {FT,Ps} = hm:freshen(T), 
+            {hm:replaceLn(FT,0,L),Ps}
     end.
 
 
@@ -414,7 +423,7 @@ lookupMulti(X,Env,L) ->
                     util:to_string(X) ++ " on line " ++ util:to_string(L)});
         Ts           -> lists:foldr(fun(T,{AccTs,AccPs}) -> 
                             {FT,FPs} = hm:freshen(T),
-                            {[FT|AccTs], FPs ++ AccPs}
+                            {[hm:replaceLn(FT,0,L)|AccTs], FPs ++ AccPs}
                         end, {[],[]} ,Ts)
     end.
 

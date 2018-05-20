@@ -4,7 +4,7 @@
 -export([emptySub/0,comp/2,subE/2,subT/2,subP/2,subPs/2,free/1]).
 -export([bt/2,funt/3,tvar/2,tcon/3,forall/4]).
 -export([freshen/1,generalize/3,eqType/2,fresh/1]).
--export([getLn/1,pretty/1,prettyCs/2,prettify/2]).
+-export([getLn/1,pretty/1,prettyCs/2,prettify/2,replaceLn/3]).
 -export_type([constraint/0,type/0]).
 
 
@@ -79,8 +79,9 @@ unify ({tvar,L,V},T) ->
     Occ = occurs(V,T),
     if
         Eq              -> emptySub();
-        Occ             -> erlang:error({type_error,
-                                "Failed occurs check on line" ++ util:to_string(L)});
+        Occ             -> 
+            erlang:error({type_error,
+                                "Failed occurs check on line " ++ util:to_string(L)});
         true            -> maps:put(V,T,emptySub())
     end;
 unify (T,{tvar,L,V}) ->
@@ -129,6 +130,14 @@ getLn ({tcon, L, _, _})    -> L;
 getLn ({forall, {tvar, L, _}, _, _}) -> L;
 getLn ({whilst, _, T}) -> getLn(T).
 
+-spec replaceLn(type(),integer(),integer()) -> type().
+replaceLn ({bt, L0, X},L0,L1)         -> {bt, L1, X};
+replaceLn ({funt, L0, As, B},L0,L1)   -> 
+    {funt, L1, lists:map(fun(A) -> replaceLn(A,L0,L1) end, As), replaceLn(B,L0,L1)};
+replaceLn ({tvar, L0, X},L0,L1)       -> {tvar, L1, X};
+replaceLn ({tcon, L0, N, Args},L0,L1)    -> 
+    {tcon, L1, N, lists:map(fun(A) -> replaceLn(A,L0,L1) end, Args)};
+replaceLn (T,_,_)                    -> T.
 
 -spec fresh(integer()) -> type().
 fresh(L) -> tvar(make_ref(),L).
@@ -341,7 +350,7 @@ prettify(Env, {tcon, _, N, As}) ->
             , Env, As)
     end
 ;
-prettify(Env,{forall, T, Ps, A}) ->
+prettify(Env,{forall, _, Ps, A}) ->
     case Ps of
         [] -> prettify(Env, A);
         _ ->
