@@ -121,11 +121,18 @@ infer(Env,{op,L,Op,E1,E2}) ->
     {T2, Cs2, Ps2} = infer(Env, E2),
     V = hm:fresh(L),
     {V, Cs1 ++ Cs2 ++ unify(T, hm:funt([T1,T2],V,L)), Ps ++ Ps1 ++ Ps2};
-infer(_,{atom,L,X}) ->
+infer(Env,{atom,L,X}) ->
     case X of
-        B when (B == true) or (B == false) -> 
-                {hm:bt(boolean,L),[],[]};
-        _ ->    {hm:bt(atom,L),[],[]}
+        B when is_boolean(B) -> 
+            {hm:bt(boolean,L),[],[]};
+        _ -> 
+            % lookup if atom is a nullary constructor
+            case lookupMulti({X,0},Env,L) of   
+                {nothing} -> {hm:bt(atom,L),[],[]};
+                {just,{ConstrTypes,ConstrPs}} ->
+                    V = hm:fresh(L),
+                    {V, [], [{oc,hm:funt([],V,L),ConstrTypes}] ++ ConstrPs}
+            end
     end;
 infer(Env,{'fun',L,{function,X,ArgLen}}) ->
     {T, Ps} = lookup({X,ArgLen},Env,L), {T,[],Ps};
@@ -149,13 +156,17 @@ infer(Env,{tuple,L,Es}) ->
             {atom,L,Constructor} = HeadEl,
             % and the tail as arguments to constructor
             Args = TailEls,
-            {ConstrTypes,ConstrPs}  = lookupMulti({Constructor,length(Args)},Env,L),
-            {ArgTypes,ArgCs,ArgPs}  = lists:foldl(fun(X, {AccT,AccCs,AccPs}) -> 
-                {T,Cs,Ps} = infer(Env,X),
-                {AccT ++ [T], AccCs ++ Cs, AccPs ++ Ps}
-            end, {[],[],[]}, Args),
-            V = hm:fresh(L),
-            {V, ArgCs, [{oc,hm:funt(ArgTypes,V,L),ConstrTypes}] ++ ConstrPs ++ ArgPs};
+            case lookupMulti({Constructor,length(Args)},Env,L) of
+                {nothing} -> erlang:error({type_error,"Unbound constructor " ++ 
+                    util:to_string(Constructor) ++ " on line " ++ util:to_string(L)});
+                {just,{ConstrTypes,ConstrPs}}  -> 
+                    {ArgTypes,ArgCs,ArgPs}  = lists:foldl(fun(X, {AccT,AccCs,AccPs}) -> 
+                        {T,Cs,Ps} = infer(Env,X),
+                        {AccT ++ [T], AccCs ++ Cs, AccPs ++ Ps}
+                    end, {[],[],[]}, Args),
+                    V = hm:fresh(L),
+                    {V, ArgCs, [{oc,hm:funt(ArgTypes,V,L),ConstrTypes}] ++ ConstrPs ++ ArgPs}
+            end;
         _           ->
             {Ts,Cs,Ps} = lists:foldl(
                 fun(X, {AccT,AccCs,AccPs}) -> 
@@ -419,12 +430,11 @@ lookupRemote(X,Env,L,Module) ->
 -spec lookupMulti(hm:tvar(),hm:env(),integer()) -> {[hm:type()],[hm:predicate()]}.
 lookupMulti(X,Env,L) ->
     case env:lookupMulti(X,Env) of
-        []   -> erlang:error({type_error,"Unbound constructor " ++ 
-                    util:to_string(X) ++ " on line " ++ util:to_string(L)});
-        Ts           -> lists:foldr(fun(T,{AccTs,AccPs}) -> 
+        []   -> {nothing};
+        Ts   -> {just,lists:foldr(fun(T,{AccTs,AccPs}) -> 
                             {FT,FPs} = hm:freshen(T),
                             {[hm:replaceLn(FT,0,L)|AccTs], FPs ++ AccPs}
-                        end, {[],[]} ,Ts)
+                end, {[],[]} ,Ts)}
     end.
 
 
@@ -444,6 +454,8 @@ addUDT({TypeConstr,DataConstrs,Args},Env,L) ->
 
 % returns a list of Env entries - one for each data constructor
 -spec getConstrTypes(hm:type(),erl_syntax:syntaxTree()) -> [{var(),hm:type()}].
+getConstrTypes(Type,{atom,L,DataConstr}) ->
+    [{{DataConstr,0},hm:funt([],Type,L)}];
 getConstrTypes(Type,{type,L,tuple,[{atom,_,DataConstr}|Args]}) ->
     ArgTypes = lists:map(fun node2type/1, Args),
     [{{DataConstr,length(Args)},hm:funt(ArgTypes,Type,L)}];
