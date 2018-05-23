@@ -149,6 +149,15 @@ infer(Env,{cons,L,H,T}) ->
         unify(TType,LType)  % unify tail type with "List V"
     , HPs ++ TPs};
 infer(Env,{tuple,L,Es}) ->
+    % lazy treatement of tuple as a tuple (not constructor)
+    TupleTyping = fun() ->  
+        {Ts,Cs,Ps} = lists:foldl(
+                        fun(X, {AccT,AccCs,AccPs}) -> 
+                            {T,Cs,Ps} = infer(Env,X),
+                            {AccT ++ [T], AccCs ++ Cs, AccPs ++ Ps}
+                        end, {[],[],[]}, Es),
+        {hm:tcon("Tuple",Ts,L),Cs,Ps}
+    end,
     case Es of
         % if first element of tuple is an atom,
         [{atom,_,_}=HeadEl|TailEls]   ->
@@ -157,8 +166,7 @@ infer(Env,{tuple,L,Es}) ->
             % and the tail as arguments to constructor
             Args = TailEls,
             case lookupConstrs({Constructor,length(Args)},Env,L) of
-                {nothing} -> erlang:error({type_error,"Unbound constructor " ++ 
-                    util:to_string(Constructor) ++ " on line " ++ util:to_string(L)});
+                {nothing} -> TupleTyping();
                 {just,{ConstrTypes,ConstrPs}}  -> 
                     {ArgTypes,ArgCs,ArgPs}  = lists:foldl(fun(X, {AccT,AccCs,AccPs}) -> 
                         {T,Cs,Ps} = infer(Env,X),
@@ -167,13 +175,7 @@ infer(Env,{tuple,L,Es}) ->
                     V = hm:fresh(L),
                     {V, ArgCs, [{oc,hm:funt(ArgTypes,V,L),ConstrTypes}] ++ ConstrPs ++ ArgPs}
             end;
-        _           ->
-            {Ts,Cs,Ps} = lists:foldl(
-                fun(X, {AccT,AccCs,AccPs}) -> 
-                    {T,Cs,Ps} = infer(Env,X),
-                    {AccT ++ [T], AccCs ++ Cs, AccPs ++ Ps}
-                end, {[],[],[]}, Es),
-            {hm:tcon("Tuple",Ts,L),Cs,Ps}
+        _           -> TupleTyping()
     end;
 infer(Env,{'if',_,Clauses}) ->
     {ClauseTs, Cs, Ps} = inferClauses(Env,Clauses),
