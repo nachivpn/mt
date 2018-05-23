@@ -127,7 +127,7 @@ infer(Env,{atom,L,X}) ->
             {hm:bt(boolean,L),[],[]};
         _ -> 
             % lookup if atom is a nullary constructor
-            case lookupMulti({X,0},Env,L) of   
+            case lookupConstrs({X,0},Env,L) of   
                 {nothing} -> {hm:bt(atom,L),[],[]};
                 {just,{ConstrTypes,ConstrPs}} ->
                     V = hm:fresh(L),
@@ -156,7 +156,7 @@ infer(Env,{tuple,L,Es}) ->
             {atom,L,Constructor} = HeadEl,
             % and the tail as arguments to constructor
             Args = TailEls,
-            case lookupMulti({Constructor,length(Args)},Env,L) of
+            case lookupConstrs({Constructor,length(Args)},Env,L) of
                 {nothing} -> erlang:error({type_error,"Unbound constructor " ++ 
                     util:to_string(Constructor) ++ " on line " ++ util:to_string(L)});
                 {just,{ConstrTypes,ConstrPs}}  -> 
@@ -254,21 +254,28 @@ checkExpr(Env,{cons,_,H,T}) ->
     {Env_,HCs,HPs} = checkExpr(Env,H),
     {Env__,TCs,TPs} = checkExpr(Env_,T),
     {Env__,HCs ++ TCs, HPs ++ TPs};
+checkExpr(Env,{'if',L,Clauses}) ->
+    Env_ = addCommonBindings(Clauses,Env,L),
+    {_, Cs, Ps} = inferClauses(Env_,Clauses),
+    {Env_ , Cs, Ps};
+checkExpr(Env,{'case',L,Expr,Clauses}) ->
+    {EType,ECs,EPs} = infer(Env,Expr),
+    Env_ = addCommonBindings(Clauses,Env,L),
+    {ClauseTs, Cs, Ps} = inferClauses(Env_,Clauses),
+    PatTs = lists:map(fun({[PT],_}) -> PT end, ClauseTs),
+    { Env_
+    , ECs ++ Cs ++ unify(PatTs) ++ unify(EType,lists:last(PatTs))
+    , EPs ++ Ps};
+checkExpr(Env,{'receive',L,Clauses}) ->
+    Env_ = addCommonBindings(Clauses,Env,L),
+    {ClauseTs, Cs, Ps} = inferClauses(Env_,Clauses),
+    PatTs = lists:map(fun({[PT],_}) -> PT end, ClauseTs),
+    { Env_
+    , Cs ++ unify(PatTs)
+    , Ps};
 checkExpr(Env,ExprNode) -> 
-    L = util:getLn(ExprNode),
-    BranchClauses = 
-        case type (ExprNode) of
-            if_expr         -> erl_syntax:if_expr_clauses(ExprNode);
-            case_expr       -> erl_syntax:case_expr_clauses(ExprNode);
-            receive_expr    -> erl_syntax:receive_expr_clauses(ExprNode);
-            _               -> []
-        end,
-    % type check the common bindings to extend env
-    Env_ = lists:foldl(fun(X,AccEnv) ->
-        {AccEnv_,_,_} = checkExpr(AccEnv,{var,L,X}), AccEnv_
-    end, Env, commonBindings(BranchClauses)),
-    {_,Constraints,Ps} = infer(Env_, ExprNode),
-    {Env_,Constraints,Ps}.
+    {_,Cs,Ps} = infer(Env, ExprNode),
+    {Env,Cs,Ps}.
 
 
 % infer the types of patterns in arguments of function definition
@@ -427,9 +434,9 @@ lookupRemote(X,Env,L,Module) ->
     end.
 
 
--spec lookupMulti(hm:tvar(),hm:env(),integer()) -> {[hm:type()],[hm:predicate()]}.
-lookupMulti(X,Env,L) ->
-    case env:lookupMulti(X,Env) of
+-spec lookupConstrs(hm:tvar(),hm:env(),integer()) -> {[hm:type()],[hm:predicate()]}.
+lookupConstrs(X,Env,L) ->
+    case env:lookupConstrs(X,Env) of
         []   -> {nothing};
         Ts   -> {just,lists:foldr(fun(T,{AccTs,AccPs}) -> 
                             {FT,FPs} = hm:freshen(T),
@@ -449,7 +456,7 @@ addUDT({TypeConstr,DataConstrs,Args},Env,L) ->
     % add every data constructor to Env
     lists:foldl(fun({DConstr,DConstrType}, AccEnv) ->
         PolyDConstrType = hm:generalize(DConstrType,Env,[]),
-        env:extend(DConstr,PolyDConstrType,AccEnv)
+        env:extendConstr(DConstr,PolyDConstrType,AccEnv)
     end, Env, getConstrTypes(Type, DataConstrs)). 
 
 % returns a list of Env entries - one for each data constructor
@@ -472,14 +479,14 @@ node2type({type,L,tuple,Args}) -> hm:tcon("Tuple",lists:map(fun node2type/1, Arg
 node2type({type,L,list,Args}) -> hm:tcon("List",lists:map(fun node2type/1, Args),L);
 node2type({user_type,L,T,Args}) -> hm:tcon(T,lists:map(fun node2type/1, Args),L).
 
-% given a list branches, returns the common bindings in all of them
--spec commonBindings([erl_syntax:syntaxTree()]) -> [var()].
-commonBindings(Clauses) ->
-    case Clauses of
+% given a list branches, add all the common bindings (in all of them) to the env
+addCommonBindings(Clauses,Env,L) ->
+    CommonBindings = case Clauses of
         [] -> [];
         _  ->
             BindingsList = lists:map(fun erl_syntax_lib:variables/1, Clauses),
             sets:to_list(sets:intersection(BindingsList))
-    end.
-
-
+    end,
+    lists:foldl(fun(X,AccEnv) ->
+        {AccEnv_,_,_} = checkExpr(AccEnv,{var,L,X}), AccEnv_
+    end, Env, CommonBindings).

@@ -1,6 +1,6 @@
 -module(env).
--export([empty/0,lookup/2,extend/3,free/2
-        ,is_bound/2,fmapV/2,lookupMulti/2,default/0
+-export([empty/0,lookup/2,extend/3,extendConstr/3,free/2
+        ,is_bound/2,fmapV/2,lookupConstrs/2,default/0
         ,freeInEnv/1,length/1
         ,dumpModuleBindings/2,readModuleBindings/1
         ,lookupRemote/3]).
@@ -8,7 +8,8 @@
 
 % Type checker ENvironment
 -record(ten, 
-    {   bindings = []
+    {   bindings        = [],
+        constructors    = []
     }).
 
 -type env() :: ten.
@@ -24,11 +25,13 @@ is_bound(X,Env) -> proplists:is_defined(X,Env#ten.bindings).
 
 extend(X,A,Env) -> Env#ten{bindings = [{X,A} | Env#ten.bindings]}.
 
+extendConstr(X,A,Env) -> Env#ten{constructors = [{X,A} | Env#ten.constructors]}.
+
 free(X,Env) -> Env#ten{bindings = proplists:delete(X,Env#ten.bindings)}.
 
 fmapV(F,Env) -> Env#ten{bindings = lists:map(fun ({Var,Type}) -> {Var,F(Type)} end, Env#ten.bindings)}.
 
-lookupMulti(X,Env) -> proplists:get_all_values(X,Env#ten.bindings).
+lookupConstrs(X,Env) -> proplists:get_all_values(X,Env#ten.constructors).
 
 -spec freeInEnv(hm:env()) -> set:set(hm:tvar()).
 freeInEnv (Env) ->
