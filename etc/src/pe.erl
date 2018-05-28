@@ -44,19 +44,34 @@ reduce({call,L,{atom,L,FunName},Args},Env) ->
         true -> fun isValue/1;
         false -> fun isStatic/1 
     end,
+    Call_ = {call,L,{atom,L,FunName},Args_},
     % if all arguments pass criteria
     case lists:all(CriteriaFun,Args_) of
         % then, inline
         true ->
             try
-                % get called function body
-                Fun = maps:get({FunName,length(Args_)},Env#pen.funs),
-                % rename variables
-                {_,{'fun',LF,{clauses,Clauses}}} = scp_expr:alpha_convert(#env{},Fun),
-                % filter matching clauses
-                Clauses_ = filterClauses(Clauses,Args_,Env),
-                ReducedFun = {'fun',LF,{clauses,Clauses_}},
-                {decideClause(Clauses_,L,ReducedFun),Env}
+                FnKey = {FunName,length(Args_)},
+                StaticArgs = lists:all(fun isStatic/1,Args_),
+                case {maps:is_key(FnKey,Env#pen.funs),StaticArgs} of
+                    % function body is available in environment
+                    {true,_}    ->
+                        % get called function body
+                        Fun = maps:get(FnKey,Env#pen.funs),
+                        % rename variables
+                        {_,{'fun',LF,{clauses,Clauses}}} = scp_expr:alpha_convert(#env{},Fun),
+                        % filter matching clauses
+                        Clauses_ = filterClauses(Clauses,Args_,Env),
+                        ReducedFun = {'fun',LF,{clauses,Clauses_}},
+                        {decideClause(Clauses_,L,ReducedFun),Env};
+                    % since function body is not available, 
+                    % it's probably a default function
+                    % arguments are static, so call meta-interpreter erl_eval
+                    {_,true}   ->
+                        {value,V,_} = erl_eval:expr(Call_,[]),
+                        {mkNode(V,L), Env};
+                    {_,false}  ->
+                        {Call_,Env}
+                end
             catch
                 error:{pe_error,no_match, Reason} ->
                     erlang:error("When evaluating function call on line " 
@@ -64,7 +79,7 @@ reduce({call,L,{atom,L,FunName},Args},Env) ->
             end;
         % else, leave call as it is
         false ->
-            {{call,L,{atom,L,FunName},Args_},Env}
+            {Call_,Env}
     end;
 reduce({'case',L,MainExpr,Clauses},Env) ->
     {MainExpr_,_}   = reduce(MainExpr,Env),
@@ -366,6 +381,12 @@ maxType(integer  ,float)     -> float;
 maxType(float    ,integer)   -> float;
 maxType(float    ,float)     -> float;
 maxType(T        ,T)         -> T.
+
+mkNode(X,L) when is_integer(X) -> {integer,L,X};
+mkNode(X,L) when is_float(X) -> {float,L,X};
+mkNode(X,L) when is_atom(X) -> {atom,L,X};
+mkNode(X,L) when is_tuple(X) -> 
+    {tuple,L,lists:map(fun(E) ->mkNode(E,L) end,tuple_to_list(X))}.
 
 % eliminate dangling values in a expression (list) body
 elimDeadBody(Body) ->
