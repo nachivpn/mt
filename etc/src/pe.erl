@@ -61,7 +61,7 @@ reduce({call,L,{atom,L,FunName},Args},Env) ->
                         {_,{'fun',LF,{clauses,Clauses}}} = scp_expr:alpha_convert(#env{},Fun),
                         % filter matching clauses
                         Clauses_ = filterClauses(Clauses,Args_,Env),
-                        ReducedFun = {'fun',LF,{clauses,Clauses_}},
+                        ReducedFun = {call,L,{'fun',LF,{clauses,Clauses_}},Args_},
                         {decideClause(Clauses_,L,ReducedFun),Env};
                     % since function body is not available, 
                     % it's probably a default function
@@ -237,11 +237,13 @@ filterClauses([{clause,_,Patterns,_,_}=C|Cs],Args,Env) ->
             Matches = lists:all(fun({P,A}) -> matches(P,A) end,lists:zip(Patterns_,Args)),
             case {Matches,Guards_} of
                 % pattern matches (no guards), take it and keep only this!
-                {true,[]}    -> [C2];
+                {true,[]}                   -> [C2];
                 % pattern matches and guard evaluates to true, keep only this
                 {true,[[{atom,_,true}]]}    -> [C2];
-                % pattern matches, but guard evaluates to false, discard
-                {true,[[{atom,_,false}]]}   -> filterClauses(Cs,Args,Env);
+                % pattern matching failed gotta discard
+                {false,_}                   -> filterClauses(Cs,Args,Env);
+                % guard evaluates to false, discard
+                {_,[[{atom,_,false}]]}      -> filterClauses(Cs,Args,Env);
                 % pattern matches does not match at spec. time OR
                 % guard doesn't evaluate to true/false at spec. time -- gotta keep it
                 _                           -> [C2] ++ filterClauses(Cs,Args,Env)
