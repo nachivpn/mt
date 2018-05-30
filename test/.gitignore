@@ -19,3 +19,4 @@ rebar3.crashdump
 .stack-work/
 erly
 *.beam
+*.ei

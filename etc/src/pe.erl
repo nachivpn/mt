@@ -240,8 +240,6 @@ filterClauses([{clause,_,Patterns,_,_}=C|Cs],Args,Env) ->
                 {true,[]}                   -> [C2];
                 % pattern matches and guard evaluates to true, keep only this
                 {true,[[{atom,_,true}]]}    -> [C2];
-                % pattern matching failed gotta discard
-                {false,_}                   -> filterClauses(Cs,Args,Env);
                 % guard evaluates to false, discard
                 {_,[[{atom,_,false}]]}      -> filterClauses(Cs,Args,Env);
                 % pattern matches does not match at spec. time OR
