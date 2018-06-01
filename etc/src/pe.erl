@@ -102,7 +102,7 @@ reduce({match,L,LExpr,RExpr},Env) ->
     Env1_ = Env1#pen{bound=sets:union(Env1#pen.bound,erl_syntax_lib:variables(LExpr_))},
     {RExpr_,_} = reduce(RExpr,Env),
     Sub = unify(LExpr_,RExpr_), 
-    Env3 = Env1_#pen{vars=maps:merge(Env1_#pen.vars,Sub)},
+    Env3 = Env1_#pen{vars=comp(Sub,Env1_#pen.vars)},
     % this is important to preserve call by value semantics
     case isValue(RExpr_) of
         % since the RHS is known to be a value, 
