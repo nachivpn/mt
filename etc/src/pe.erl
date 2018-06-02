@@ -75,13 +75,25 @@ reduce({call,L,{atom,L,FunName},Args},Env) ->
             {Call_,Env}
     end;
 reduce({'case',L,MainExpr,Clauses},Env) ->
-    {MainExpr_,_}   = reduce(MainExpr,Env),
+    {MainExpr1,_}   = reduce(MainExpr,Env),
+    % Convert reduced right expr to a static form by generating fresh variables
+    {MainExpr_,ConvMatches,_}  = convertToStatic(MainExpr1,0),
+    %%%%%%%%%%%%%%%%%% Bindings business
+    % Add all fresh variables to original env
+    FBindings = lists:foldl(fun(E,AccSet) ->
+        sets:union(AccSet,erl_syntax_lib:variables(E))
+    end,Env#pen.bound,ConvMatches),    
+    % Update env with generated variables
+    Env_            = Env#pen{bound=sets:union(Env#pen.bound,FBindings)},
+    %%%%%%%%%%%%%%%%%% Reduction business
     % reduce clauses to static values for elimination
-    Clauses1        = lists:map(fun(C) -> reduceClause(C,Env) end, Clauses),
+    Clauses1        = lists:map(fun(C) -> reduceClause(C,Env_) end, Clauses),
     % eliminate branches known to be dead
-    Clauses2        = filterClauses(Clauses1,[MainExpr_],Env),
-    ReducedCase     = {'case',L,MainExpr_,Clauses2},
-    {decideClause(Clauses2,L,ReducedCase),Env};
+    Clauses2        = filterClauses(Clauses1,[MainExpr_],Env_),
+    %%%%%%%%%%%%%%%%%% Wrap-up business
+    ReducedExpr     = decideClause(Clauses2,L,{'case',L,MainExpr_,Clauses2}),
+    ReturnExprs     = ConvMatches ++ [ReducedExpr],
+    {blockify(ReturnExprs,L),Env_};
 reduce({'if',L,Clauses},Env) ->
     % reduce clauses to static values for elimination
     Clauses1    = lists:map(fun(C) -> reduceClause(C,Env) end, Clauses),
@@ -90,18 +102,40 @@ reduce({'if',L,Clauses},Env) ->
     ReducedIf   = {'if',L,Clauses2}, 
     {decideClause(Clauses2,L,ReducedIf),Env};
 reduce({match,L,LExpr,RExpr},Env) ->
+    %%%%%%%%%%%%%%%%%% Reduction business
+    % Reduce left expression
     {LExpr_,Env1} = reduce(LExpr,Env),
-    % add all variables on left expr to bound (seen)
-    Env1_       = Env1#pen{bound=sets:union(Env1#pen.bound,erl_syntax_lib:variables(LExpr_))},
-    {RExpr_,_}  = reduce(RExpr,Env),
-    {Sub,Ds}    = unify(LExpr_,RExpr_),
+    % Reduce right expression
+    {RExpr1,_}  = reduce(RExpr,Env),
+    % Convert reduced right expr to a static form by generating fresh variables
+    % TODO: to avoid name clash (!), use a counter in pen
+    {RExpr_,ConvMatches,_}  = convertToStatic(RExpr1,0),
+    %%%%%%%%%%%%%%%%%% Bindings business
+    % get all freshly generated bindings
+    FBindings = lists:foldl(fun(E,AccSet) ->
+        sets:union(AccSet,erl_syntax_lib:variables(E))
+    end,sets:new(),ConvMatches),
+    % get all bindings on left
+    LBindings = erl_syntax_lib:variables(LExpr_),
+    % combine with fresh bindings (as these must be visible later on)
+    LnFBindings = sets:union(FBindings,LBindings),
+    %%%%%%%%%%%%%%%%%% Unification business
+    % update the environment with all bindings (generated and left)
+    Env1_       = Env1#pen{bound=sets:union(Env1#pen.bound,LnFBindings)},    
+    % Unify and put result sub into the env to be returned
+    Sub         = unify(LExpr_,RExpr_),
     Env2        = addSubToEnv(Sub,Env1_,L),
-    Matches     = scopeNewVarsIn(Sub,Env,L) ++ dynamicSubsAsMatches(Ds,L),
-    case Matches of
-        []  -> {RExpr_,Env2};
-        [M] -> {M,Env2};
-        _   -> {{block,L,Matches},Env2}
-    end;
+    %%%%%%%%%%%%%%%%%% Scoping business
+    Env_            = Env#pen{bound=sets:union(Env#pen.bound,FBindings)},
+    BindingMatches  = scopeNewVarsIn(Sub,Env_,L),
+    %%%%%%%%%%%%%%%%%% Wrap-up
+    % combine all matches and return
+    ReturnExprs     = ConvMatches ++ BindingMatches ++ 
+        case isVar(LExpr_) and isValue(RExpr_) of
+            true    -> [RExpr_];
+            false   -> [{match,L,LExpr_,RExpr_}]
+        end,
+    {blockify(ReturnExprs,L),Env2};
 reduce({cons,L,HExpr,TExpr},Env) ->
     {HExpr_,Env1} = reduce(HExpr,Env),
     {TExpr_,Env2} = reduce(TExpr,Env1),
@@ -210,17 +244,20 @@ filterClauses([{clause,L,Patterns,_,_}=C|Cs],Args,Env) ->
         % in terms of main expr (order matters!)
         unifyMany(Patterns,Args)
     of
-        {Sub,Ds} ->
+        Sub ->
             BoundPatVars = lists:foldr(fun(P,AccSet) ->
                 sets:union(AccSet,erl_syntax_lib:variables(P))
             end,sets:new(), Patterns), 
             % reduce the clause in a new env w/ sub only (to avoid interference)
-            ReductionEnv    = #pen{vars = maps:new(),bound = sets:union(Env#pen.bound,BoundPatVars)},
+            ReductionEnv    = #pen{
+                funs = Env#pen.funs
+                , vars = maps:new()
+                , bound = sets:union(Env#pen.bound,BoundPatVars)},
             ReductionEnv_   = addSubToEnv(Sub,ReductionEnv,L),
             C1              = reduceClause(C,ReductionEnv_),
             {clause,L,Patterns_,Guards_,Body_} = C1,
             % bind new variables in patterns & get dynamic subs as matches
-            BindingMatches = scopeNewVarsIn(Sub,Env,L) ++ dynamicSubsAsMatches(Ds,L),
+            BindingMatches = scopeNewVarsIn(Sub,Env,L),
             C2 = {clause,L,Patterns_,Guards_, BindingMatches ++ Body_},
             % checks used for clause matching
             PAs = lists:zip(Patterns_,Args),
@@ -266,53 +303,57 @@ decideClause(Clauses,L,ReducedExpr) ->
 
 % unify two patterns
 unify({cons,_,LH,LT},{cons,_,RH,RT}) -> 
-    {Sub1,Ds1} = unify(LH,RH),
+    Sub1 = unify(LH,RH),
     LT_ = applySub(Sub1,LT),
     RT_ = applySub(Sub1,RT),
-    {Sub2,Ds2} = unify(LT_,RT_),
-    {comp(Sub2,Sub1),Ds1++Ds2};
+    Sub2 = unify(LT_,RT_),
+    comp(Sub2,Sub1);
 unify({tuple,_,Es1},{tuple,_,Es2})   -> 
     case length(Es1) == length(Es2) of
         false -> erlang:error({pe_error,unification,"Cannot unify tuples"});
         true -> 
-            lists:foldl(fun({E1,E2},{AccSub,AccDs}) ->
-                {S,Ds} = unify(applySub(AccSub,E1),applySub(AccSub,E2)),
-                {comp(S,AccSub),AccDs ++ Ds}
-            end, {maps:new(),[]}, lists:zip(Es1,Es2))
+            lists:foldl(fun({E1,E2},AccSub) ->
+                S = unify(applySub(AccSub,E1),applySub(AccSub,E2)),
+                comp(S,AccSub)
+            end, maps:new(), lists:zip(Es1,Es2))
     end;
-unify({var,_,X},{var,_,X})          -> {maps:new(),[]};
+unify({var,_,X},{var,_,X})          -> maps:new();
 unify({var,_,X},R)                  ->
-    case {occurs(X,R),isValue(R)} of
-        {true,_}        -> 
+    case occurs(X,R) of
+        true    -> 
             erlang:error({pe_error,unification,"occurs check!"});
-        {false,true}    -> 
-            {maps:put(X,R,maps:new()),[]};
-        {false,false}   -> 
-            {maps:new(),[{X,R}]}
+        false   -> 
+            maps:put(X,R,maps:new())
     end;
 % TODO what if variable on R is not defined
 unify(L,R={var,_,_})                -> unify(R,L);
-unify({nil,_},{nil,_})              -> {maps:new(),[]};
-unify({integer,_,I},{integer,_,I})  -> {maps:new(),[]};
-unify({atom,_,A},{atom,_,A})        -> {maps:new(),[]};
-unify({string,_,S},{string,_,S})    -> {maps:new(),[]};
-unify({float,_,F},{float,_,F})      -> {maps:new(),[]};
+unify({nil,_},{nil,_})              -> maps:new();
+unify({integer,_,I},{integer,_,I})  -> maps:new();
+unify({atom,_,A},{atom,_,A})        -> maps:new();
+unify({string,_,S},{string,_,S})    -> maps:new();
+unify({float,_,F},{float,_,F})      -> maps:new();
 unify(X,Y)                          ->
     erlang:error({pe_error,unification,"Cannot unify patterns: " 
     ++ util:to_string(X) ++ " and " ++ util:to_string(Y)}).
 
-unifyMany([],[])            -> {maps:new(),[]};
+unifyMany([],[])            -> maps:new();
 unifyMany([],_)             -> erlang:error({pe_error, unification, "arg_mismatch"});
 unifyMany(_,[])             -> erlang:error({pe_error, unification, "arg_mismatch"});
 unifyMany ([A0|As],[B0|Bs])   ->
-    {Sub0,Ds0} = unify(A0,B0),
+    Sub0 = unify(A0,B0),
     As_ = lists:map(fun(A1) -> applySub(Sub0,A1) end, As),
     Bs_ = lists:map(fun(B1) -> applySub(Sub0,B1) end, Bs),
-    {Sub,Ds} = unifyMany(As_,Bs_),
-    {comp(Sub,Sub0),Ds0 ++ Ds}.
+    Sub = unifyMany(As_,Bs_),
+    comp(Sub,Sub0).
 
-applySub(Sub,{cons,L,H,T}) -> {cons,L,applySub(Sub,H),applySub(Sub,T)};
-applySub(Sub,{var,L,X}) -> maps:get(X,Sub,{var,L,X});
+applySub(Sub,{cons,L,H,T}) -> 
+    {cons,L,applySub(Sub,H),applySub(Sub,T)};
+applySub(Sub,{tuple,L,Es}) -> 
+    {tuple,L,lists:map(fun(E) -> applySub(Sub,E) end,Es)};
+applySub(Sub,{call,L,F,As}) ->
+    {call,L,applySub(Sub,F),lists:map(fun(A) -> applySub(Sub,A) end,As)};
+applySub(Sub,{var,L,X}) -> 
+    maps:get(X,Sub,{var,L,X});
 applySub(_,E) -> E.
 
 comp (X,Y) ->
@@ -368,6 +409,9 @@ isValue({cons,_,H,T})   -> isValue(H) and isValue(T);
 isValue({tuple,_,Es})   -> lists:all(fun isValue/1, Es);
 isValue(_) -> false.
 
+isVar({var,_,_})    -> true;
+isVar(_)            -> false.
+
 getValue(V) -> element(3,V).
 
 getMaxType(E1,E2) -> maxType(erl_syntax:type(E1),erl_syntax:type(E2)).
@@ -391,10 +435,46 @@ elimDeadBody(Body) ->
         lists:droplast(Body)) 
     ++ [lists:last(Body)].
 
-dynamicSubsAsMatches(Ds,L) ->
-    lists:foldl(fun({X,BoundExpr},AccMatches) ->
-            AccMatches ++ [{match,L,{var,L,X},BoundExpr}]
-        end, [], Ds).
+convertToStatic({cons,L,H,T},Counter) ->
+    {H_,HMs,Counter1} = convertToStatic(H,Counter),
+    {T_,TMs,Counter2} = convertToStatic(T,Counter1),
+    {{cons,L,H_,T_}, HMs++ TMs, Counter2};
+convertToStatic({tuple,L,Exprs},Counter) ->
+    {Exprs_,Matches,Counter_} = lists:foldl(fun(E,{AccEs,AccMs,AccCounter}) ->
+        {E_,EMs,AccCounter_} = convertToStatic(E,AccCounter),
+        {AccEs ++ [E_], AccMs ++ EMs, AccCounter_}
+    end,{[],[],Counter},Exprs),
+    {{tuple,L,Exprs_},Matches,Counter_};
+convertToStatic({op,L,Op,LE,RE},Counter) ->
+    {LE_,LMs,Counter1} = convertToStatic(LE,Counter),
+    {RE_,RMs,Counter2} = convertToStatic(RE,Counter1),
+    {{op,L,Op,LE_,RE_},LMs ++ RMs,Counter2};
+convertToStatic({call,L,F,Args},Counter) ->
+    FX = {var,L,list_to_atom("X@" ++ util:to_string(Counter))},
+    {F_,FMs,Counter1} = convertToStatic(F,Counter+1),
+    {Args_,AMs,Counter2} = lists:foldl(fun(A,{AccAs,AccMs,AccCounter}) ->
+        {A_,AMs,AccCounter_} = convertToStatic(A,AccCounter),
+        {AccAs ++ [A_], AccMs ++ AMs, AccCounter_}
+    end,{[],[],Counter1},Args),
+    FMatch = {match,L,FX,{call,L,F_,Args_}},
+    {FX,[FMatch] ++ FMs ++ AMs,Counter2};
+convertToStatic({block,L,Exprs},Counter) ->
+    FX = {var,L,list_to_atom("X@" ++ util:to_string(Counter))},
+    {Exprs_,Ms,Counter1} = lists:foldl(fun(A,{AccEs,AccMs,AccCounter}) ->
+        {E_,EMs,AccCounter_} = convertToStatic(A,AccCounter),
+        {AccEs ++ [E_], AccMs ++ EMs, AccCounter_}
+    end,{[],[],Counter+1},Exprs),
+    FMatch = {match,L,FX,blockify(Exprs_,L)},
+    {FX,[FMatch | Ms],Counter1};
+% convertToStatic({match,L,LE,RE},Counter) ->
+%     {LE_,LMs,Counter1} = convertToStatic(LE,Counter),
+%     {RE_,RMs,Counter2} = convertToStatic(RE,Counter1),
+%     {{match,L,LE_,RE_},LMs ++ RMs, Env2};
+convertToStatic({var,L,X},Counter) ->
+    {{var,L,X},[],Counter};
+convertToStatic(E,Counter) -> 
+    {E,[],Counter}.
+    
 
 addSubToEnv(Sub,Env,L) ->
     UnBoundVars = lists:filter(
@@ -405,7 +485,7 @@ addSubToEnv(Sub,Env,L) ->
         ['_']   -> ok;
         _  -> 
             erlang:error({pe_error,unbound_var,
-                "Unbound variable on line " ++ util:to_string(L) ++ ": " ++ util:to_string(UnBoundVars)})
+                "Unbound variables on line " ++ util:to_string(L) ++ ": " ++ util:to_string(UnBoundVars)})
     end,  
     Env#pen{vars=comp(Sub,Env#pen.vars)}.
 
@@ -413,7 +493,7 @@ addSubToEnv(Sub,Env,L) ->
 unboundVars(Node,Env) ->
     sets:subtract(erl_syntax_lib:variables(Node),Env#pen.bound).
 
-% If there are any unbound variables in the subtitution
+% If there are any unbound variables in the body of subtitution
 % then, we must create a match expression to avoid unbound var scope
 scopeNewVarsIn(Sub,Env,L) ->
     lists:foldl(fun({X,Expr},AccMatches) ->
@@ -423,3 +503,13 @@ scopeNewVarsIn(Sub,Env,L) ->
             false -> AccMatches
         end
     end, [], maps:to_list(Sub)).
+
+blockify(Exprs,L) ->
+    case Exprs of
+        []      -> erlang:error("empty block!");
+        [Expr]  -> Expr;
+        _       -> {block,L,Exprs}
+    end.
+
+freshAtom() ->
+    list_to_atom(util:to_string(make_ref())).
