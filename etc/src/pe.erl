@@ -6,11 +6,10 @@
 -record(pen, 
     {   vars    %map of variable => value
     ,   funs    %map of {funName,Arity} => FunctionNode
-    ,   beast   %boolean indicating if PE should be aggresive
     ,   bound
     }).
 
-parse_transform(Forms,Options) ->
+parse_transform(Forms,_) ->
     FunEnv = lists:foldl(fun(F,Map) ->
         case F of
             {function,_,Name,ArgLen,_} ->
@@ -20,9 +19,8 @@ parse_transform(Forms,Options) ->
             _   -> Map
         end
     end, maps:new(), Forms),
-    BeastMode = lists:member('beast',Options),
     pp:fmapPEFns(fun(Function) -> 
-        reduceTopFn(Function,#pen{vars = maps:new(),funs = FunEnv,beast = BeastMode})
+        reduceTopFn(Function,#pen{vars = maps:new(),funs = FunEnv})
     end, Forms).
 
 reduceTopFn({function,L,Name,Args,Clauses},Env) ->
@@ -40,13 +38,8 @@ reduceTopFunClause({clause,L,Patterns, Guards, Body},Env) ->
 reduce({call,L,{atom,L,FunName},Args},Env) ->
     % reduce all the arguments
     Args_ = lists:map(fun(A) -> element(1,reduce(A,Env)) end,Args),
-    CriteriaFun = case Env#pen.beast of
-        true -> fun isValue/1;
-        false -> fun isStatic/1 
-    end,
     Call_ = {call,L,{atom,L,FunName},Args_},
-    % if all arguments pass criteria
-    case lists:all(CriteriaFun,Args_) of
+    case lists:all(fun isStatic/1,Args_) of
         % then, inline
         true ->
             try
@@ -99,28 +92,15 @@ reduce({'if',L,Clauses},Env) ->
 reduce({match,L,LExpr,RExpr},Env) ->
     {LExpr_,Env1} = reduce(LExpr,Env),
     % add all variables on left expr to bound (seen)
-    Env1_ = Env1#pen{bound=sets:union(Env1#pen.bound,erl_syntax_lib:variables(LExpr_))},
-    {RExpr_,_} = reduce(RExpr,Env),
-    Sub = unify(LExpr_,RExpr_), 
-    Env3 = Env1_#pen{vars=comp(Sub,Env1_#pen.vars)},
-    % this is important to preserve call by value semantics
-    case isValue(RExpr_) of
-        % since the RHS is known to be a value, 
-        % it is safe to return the new env (containing substitution)
-        true ->
-            case matches(LExpr_,RExpr_) of
-                % the expression matches at spec time, hence is pointless to retain
-                % we return the value (which may or may not be used upstream)
-                true    -> {RExpr_,Env3};
-                % match not known at spec time, leave the expression
-                % as pattern match may fail at run-time
-                false   -> {{match,L,LExpr_,RExpr_},Env3}
-            end;
-        % the RHS is not a value, we must simply 
-        % return the old env and reduced match expr (because it is simpler)
-        % new env is "unsafe" cz it contains
-        % substitution with non-value exprs (i.e., possibly effectful)
-        false   -> {{match,L,LExpr_,RExpr_},Env}
+    Env1_       = Env1#pen{bound=sets:union(Env1#pen.bound,erl_syntax_lib:variables(LExpr_))},
+    {RExpr_,_}  = reduce(RExpr,Env),
+    {Sub,Ds}    = unify(LExpr_,RExpr_),
+    Env2        = addSubToEnv(Sub,Env1_,L),
+    Matches     = scopeNewVarsIn(Sub,Env,L) ++ dynamicSubsAsMatches(Ds,L),
+    case Matches of
+        []  -> {RExpr_,Env2};
+        [M] -> {M,Env2};
+        _   -> {{block,L,Matches},Env2}
     end;
 reduce({cons,L,HExpr,TExpr},Env) ->
     {HExpr_,Env1} = reduce(HExpr,Env),
@@ -169,13 +149,19 @@ reduce(E={var,_,X},Env)     -> {maps:get(X,Env#pen.vars,E),Env};
 reduce(E={float,_,_},Env)   -> {E, Env};
 reduce(E={integer,_,_},Env) -> {E, Env};
 reduce(E={string,_,_},Env)  -> {E, Env};
-reduce(E={atom,_,_},Env)    -> {E, Env}.
+reduce(E={atom,_,_},Env)    -> {E, Env};
+% HACK! doesn't reduce unhandled expr
+reduce(E,Env)               -> {E, Env}.
 
 
 reduceClause({clause,CL,Patterns,Guards,Body},Env) ->
     Patterns_ = reduceClausePatterns(Patterns,Env),
-    Guards_  = reduceClauseGuards(Guards,Env),
-    Body_ = reduceClauseBody(Body,Env),
+    BoundPatVars = lists:foldr(fun(P,AccSet) ->
+                sets:union(AccSet,erl_syntax_lib:variables(P))
+            end,sets:new(), Patterns), 
+    Env_    = Env#pen{bound = sets:union(Env#pen.bound,BoundPatVars)},
+    Guards_ = reduceClauseGuards(Guards,Env),
+    Body_   = reduceClauseBody(Body,Env_),
     {clause,CL,Patterns_,Guards_,Body_}.
 
 reduceClauseBody(Body,Env) ->
@@ -218,33 +204,39 @@ reduceClauseGuards(Disjunctions,Env) ->
     end.
 
 filterClauses([],_,_)         -> [];
-filterClauses([{clause,_,Patterns,_,_}=C|Cs],Args,Env) ->
+filterClauses([{clause,L,Patterns,_,_}=C|Cs],Args,Env) ->
     try 
         % unify to obtain susbtitution for pattern 
         % in terms of main expr (order matters!)
         unifyMany(Patterns,Args)
     of
-        Sub ->
-            % reduce the clause in new sub env.
-            % note that clause is reduced for 2nd time, 
-            % as filter gets only reduced clauses
-            SubEnv = Env#pen{vars=Sub},
-            C1 = reduceClause(C,SubEnv),
+        {Sub,Ds} ->
+            BoundPatVars = lists:foldr(fun(P,AccSet) ->
+                sets:union(AccSet,erl_syntax_lib:variables(P))
+            end,sets:new(), Patterns), 
+            % reduce the clause in a new env w/ sub only (to avoid interference)
+            ReductionEnv    = #pen{vars = maps:new(),bound = sets:union(Env#pen.bound,BoundPatVars)},
+            ReductionEnv_   = addSubToEnv(Sub,ReductionEnv,L),
+            C1              = reduceClause(C,ReductionEnv_),
             {clause,L,Patterns_,Guards_,Body_} = C1,
-            % add corresponding match statements for newly bound variables in patterns
-            BindingMatches = scopeNewVarsIn(Patterns_,SubEnv,L),
+            % bind new variables in patterns & get dynamic subs as matches
+            BindingMatches = scopeNewVarsIn(Sub,Env,L) ++ dynamicSubsAsMatches(Ds,L),
             C2 = {clause,L,Patterns_,Guards_, BindingMatches ++ Body_},
-            Matches = lists:all(fun({P,A}) -> matches(P,A) end,lists:zip(Patterns_,Args)),
-            case {Matches,Guards_} of
-                % pattern matches (no guards), take it and keep only this!
-                {true,[]}                   -> [C2];
-                % pattern matches and guard evaluates to true, keep only this
-                {true,[[{atom,_,true}]]}    -> [C2];
+            % checks used for clause matching
+            PAs = lists:zip(Patterns_,Args),
+            Static = lists:all(fun({P,A})-> isStatic(P) and isStatic(A) end,PAs),
+            Matches = lists:all(fun({P,A}) -> matches(P,A) end,PAs),
+            case {Static,Matches,Guards_} of
+                % cannot determine pattern match at compile time
+                {false,_,_}                     -> [C2] ++ filterClauses(Cs,Args,Env);
+                % static values but still pattern matching fails, discard
+                {true,false,_}                  -> filterClauses(Cs,Args,Env);
                 % guard evaluates to false, discard
-                {_,[[{atom,_,false}]]}      -> filterClauses(Cs,Args,Env);
-                % pattern matches does not match at spec. time OR
-                % guard doesn't evaluate to true/false at spec. time -- gotta keep it
-                _                           -> [C2] ++ filterClauses(Cs,Args,Env)
+                {true,_,[[{atom,_,false}]]}     -> filterClauses(Cs,Args,Env);
+                % pattern matches (no guards), take it and keep only this!
+                {true,true,[]}                  -> [C2];
+                % pattern matches and guard evaluates to true, keep only this!
+                {true,true,[[{atom,_,true}]]}   -> [C2]
             end
     catch
         error:{pe_error,unification,_} -> 
@@ -274,45 +266,50 @@ decideClause(Clauses,L,ReducedExpr) ->
 
 % unify two patterns
 unify({cons,_,LH,LT},{cons,_,RH,RT}) -> 
-    Sub1 = unify(LH,RH),
+    {Sub1,Ds1} = unify(LH,RH),
     LT_ = applySub(Sub1,LT),
     RT_ = applySub(Sub1,RT),
-    Sub2 = unify(LT_,RT_),
-    comp(Sub2,Sub1);
+    {Sub2,Ds2} = unify(LT_,RT_),
+    {comp(Sub2,Sub1),Ds1++Ds2};
 unify({tuple,_,Es1},{tuple,_,Es2})   -> 
     case length(Es1) == length(Es2) of
         false -> erlang:error({pe_error,unification,"Cannot unify tuples"});
         true -> 
-            lists:foldl(fun({E1,E2},AccSub) ->
-                S = unify(applySub(AccSub,E1),applySub(AccSub,E2)),
-                comp(S,AccSub)
-            end, maps:new(), lists:zip(Es1,Es2))
+            lists:foldl(fun({E1,E2},{AccSub,AccDs}) ->
+                {S,Ds} = unify(applySub(AccSub,E1),applySub(AccSub,E2)),
+                {comp(S,AccSub),AccDs ++ Ds}
+            end, {maps:new(),[]}, lists:zip(Es1,Es2))
     end;
-unify({var,_,X},{var,_,X})          -> maps:new();
+unify({var,_,X},{var,_,X})          -> {maps:new(),[]};
 unify({var,_,X},R)                  ->
-    case occurs(X,R) of
-        true -> erlang:error({pe_error,unification,"occurs check!"});
-        false -> maps:put(X,R,maps:new())
+    case {occurs(X,R),isValue(R)} of
+        {true,_}        -> 
+            erlang:error({pe_error,unification,"occurs check!"});
+        {false,true}    -> 
+            {maps:put(X,R,maps:new()),[]};
+        {false,false}   -> 
+            {maps:new(),[{X,R}]}
     end;
 % TODO what if variable on R is not defined
 unify(L,R={var,_,_})                -> unify(R,L);
-unify({nil,_},{nil,_})              -> maps:new();
-unify({integer,_,I},{integer,_,I})  -> maps:new();
-unify({atom,_,A},{atom,_,A})        -> maps:new();
-unify({string,_,S},{string,_,S})    -> maps:new();
-unify({float,_,F},{float,_,F})      -> maps:new();
+unify({nil,_},{nil,_})              -> {maps:new(),[]};
+unify({integer,_,I},{integer,_,I})  -> {maps:new(),[]};
+unify({atom,_,A},{atom,_,A})        -> {maps:new(),[]};
+unify({string,_,S},{string,_,S})    -> {maps:new(),[]};
+unify({float,_,F},{float,_,F})      -> {maps:new(),[]};
 unify(X,Y)                          ->
     erlang:error({pe_error,unification,"Cannot unify patterns: " 
     ++ util:to_string(X) ++ " and " ++ util:to_string(Y)}).
 
-unifyMany([],[])            -> maps:new();
+unifyMany([],[])            -> {maps:new(),[]};
 unifyMany([],_)             -> erlang:error({pe_error, unification, "arg_mismatch"});
 unifyMany(_,[])             -> erlang:error({pe_error, unification, "arg_mismatch"});
 unifyMany ([A0|As],[B0|Bs])   ->
-    Sub = unify(A0,B0),
-    As_ = lists:map(fun(A1) -> applySub(Sub,A1) end, As),
-    Bs_ = lists:map(fun(B1) -> applySub(Sub,B1) end, Bs),
-    comp(unifyMany(As_,Bs_),Sub).
+    {Sub0,Ds0} = unify(A0,B0),
+    As_ = lists:map(fun(A1) -> applySub(Sub0,A1) end, As),
+    Bs_ = lists:map(fun(B1) -> applySub(Sub0,B1) end, Bs),
+    {Sub,Ds} = unifyMany(As_,Bs_),
+    {comp(Sub,Sub0),Ds0 ++ Ds}.
 
 applySub(Sub,{cons,L,H,T}) -> {cons,L,applySub(Sub,H),applySub(Sub,T)};
 applySub(Sub,{var,L,X}) -> maps:get(X,Sub,{var,L,X});
@@ -331,8 +328,7 @@ matches({tuple,_,Es1},{tuple,_,Es2})   ->
         andalso
     lists:all(
         fun({E1,E2}) -> matches(E1,E2) end,lists:zip(Es1,Es2));
-% a dynamic variable matches a (static or dynamic) value
-matches({var,_,_},V)                    -> isValue(V);
+matches({var,_,X},{var,_,X})            -> true;
 matches({nil,_},{nil,_})                -> true;
 matches({integer,_,I},{integer,_,I})    -> true;
 matches({atom,_,A},{atom,_,A})          -> true;
@@ -395,23 +391,35 @@ elimDeadBody(Body) ->
         lists:droplast(Body)) 
     ++ [lists:last(Body)].
 
+dynamicSubsAsMatches(Ds,L) ->
+    lists:foldl(fun({X,BoundExpr},AccMatches) ->
+            AccMatches ++ [{match,L,{var,L,X},BoundExpr}]
+        end, [], Ds).
+
+addSubToEnv(Sub,Env,L) ->
+    UnBoundVars = lists:filter(
+        fun(Var) -> not sets:is_element(Var,Env#pen.bound) end
+    , maps:keys(Sub)),
+    case UnBoundVars of
+        []      -> ok;
+        ['_']   -> ok;
+        _  -> 
+            erlang:error({pe_error,unbound_var,
+                "Unbound variable on line " ++ util:to_string(L) ++ ": " ++ util:to_string(UnBoundVars)})
+    end,  
+    Env#pen{vars=comp(Sub,Env#pen.vars)}.
+
+
 unboundVars(Node,Env) ->
     sets:subtract(erl_syntax_lib:variables(Node),Env#pen.bound).
 
-getBindingMatch(Vars,Env,L) ->
-    IsBoundBy = fun({_,Expr}) -> 
-        sets:is_subset(Vars,erl_syntax_lib:variables(Expr))
-    end,
-    case util:find(IsBoundBy, maps:to_list(Env#pen.vars)) of
-        {just,{X,Expr}} -> {match,L,Expr,{var,L,X}};
-        {nothing}       -> erlang:error("no binding match")
-    end.
-
-scopeNewVarsIn(Patterns_,SubEnv,L) ->
-    lists:foldl(fun(P,AccMatches) ->
-                UnboundVars = unboundVars(P,SubEnv),
-                case sets:size(UnboundVars) > 0 of
-                    true -> [getBindingMatch(UnboundVars,SubEnv,L)|AccMatches];
-                    false -> AccMatches
-                end
-    end, [],Patterns_).
+% If there are any unbound variables in the subtitution
+% then, we must create a match expression to avoid unbound var scope
+scopeNewVarsIn(Sub,Env,L) ->
+    lists:foldl(fun({X,Expr},AccMatches) ->
+        UnboundVars = unboundVars(Expr,Env),
+        case sets:size(UnboundVars) > 0 of
+            true -> [{match,L,Expr,{var,L,X}}|AccMatches];
+            false -> AccMatches
+        end
+    end, [], maps:to_list(Sub)).
