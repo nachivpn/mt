@@ -105,6 +105,18 @@ infer(Env,{call,L,{atom,_,is_function},[F,{integer,_,Arity}]}) ->
     {TF,CsF,PsF} = infer(Env,F),
     ArgTypes = lists:map(fun hm:fresh/1, lists:duplicate(Arity,L)),
     {hm:bt(boolean,L),CsF ++ unify(TF, hm:funt(ArgTypes,hm:fresh(L),L)),PsF};
+infer(Env,{call,L,{atom,_,element},[{integer,_,N},{tuple,_,Es}]}) ->
+    case N =< length(Es) of
+        false -> erlang:error({type_error,
+            "Index to element must be atleast the length of the tuple on " ++ util:to_string(L)});
+        true -> 
+            {Ts,Cs,Ps} = lists:foldl(
+                        fun(X, {AccT,AccCs,AccPs}) -> 
+                            {T,Cs,Ps} = infer(Env,X),
+                            {AccT ++ [T], AccCs ++ Cs, AccPs ++ Ps}
+                        end, {[],[],[]}, Es),
+            {lists:nth(N,Ts),Cs,Ps}
+    end;
 infer(Env,{call,L,F,Args}) ->
     {T1,Cs1,Ps1} = inferFn(Env,F,length(Args)),   
     {T2,Cs2,Ps2} = lists:foldl(
@@ -209,6 +221,13 @@ infer(Env,{lc,L,Expr,Defs}) ->
     {Env_,DefCs,DefPs} = checkLCDefs(Env,Defs),
     {T, ExprCs, ExprPs} = infer(Env_,Expr),
     {hm:tcon("List", [T],L), DefCs ++ ExprCs, DefPs ++ ExprPs};
+infer(Env,{block,L,Exprs}) ->
+    {Env_, CsBody, PsBody} = lists:foldl(fun(Expr, {Ei,Csi,Psi}) -> 
+        {Ei_,Csi_,Psi_} = checkExpr(Ei,Expr),
+        {Ei_, Csi ++ Csi_, Psi ++ Psi_}
+    end, {Env,[],[]}, lists:droplast(Exprs)),
+    {TLast, CsLast, PsLast} = infer(Env_, lists:last(Exprs)),
+    {TLast, CsBody ++ CsLast, PsBody ++ PsLast};
 infer(Env,Node) ->
     case type(Node) of
         Fun when Fun =:= function; Fun =:= fun_expr ->
@@ -248,6 +267,11 @@ checkExpr(Env,{var,L,X}) ->
     end;
 checkExpr(Env,{tuple,_,Es}) ->
     % TODO handle constructors separately!
+    lists:foldl(fun(E, {AccEnv,AccCs,AccPs}) ->
+        {ChEnv,ChCs,ChPs} = checkExpr(AccEnv,E),
+        {ChEnv, AccCs ++ ChCs, AccPs ++ ChPs}
+    end, {Env,[],[]}, Es);
+checkExpr(Env,{block,_,Es}) ->
     lists:foldl(fun(E, {AccEnv,AccCs,AccPs}) ->
         {ChEnv,ChCs,ChPs} = checkExpr(AccEnv,E),
         {ChEnv, AccCs ++ ChCs, AccPs ++ ChPs}

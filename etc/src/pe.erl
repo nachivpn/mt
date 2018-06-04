@@ -34,7 +34,7 @@ reduceTopFunClause({clause,L,Patterns, Guards, Body},Env) ->
     end,sets:new(), Patterns), 
     Body_ = reduceClauseBody(Body,Env#pen{bound = BoundArgVars}),
     {clause,L,Patterns, Guards, Body_}.
-    
+
 reduce({call,L,{atom,L,FunName},Args},Env) ->
     % reduce all the arguments
     Args_ = lists:map(fun(A) -> element(1,reduce(A,Env)) end,Args),
@@ -74,10 +74,14 @@ reduce({call,L,{atom,L,FunName},Args},Env) ->
         false ->
             {Call_,Env}
     end;
+reduce({call,L,F,Args},Env) ->
+    {F_,_} = reduce(F,Env),
+    Args_ = lists:map(fun(A) -> element(1,reduce(A,Env)) end,Args),
+    {{call,L,F_,Args_},Env};
 reduce({'case',L,MainExpr,Clauses},Env) ->
     {MainExpr1,_}   = reduce(MainExpr,Env),
     % Convert reduced right expr to a static form by generating fresh variables
-    {MainExpr_,ConvMatches,_}  = convertToStatic(MainExpr1,0),
+    {MainExpr_,ConvMatches,_}  = convertToValue(MainExpr1,0),    
     %%%%%%%%%%%%%%%%%% Bindings business
     % Add all fresh variables to original env
     FBindings = lists:foldl(fun(E,AccSet) ->
@@ -109,7 +113,7 @@ reduce({match,L,LExpr,RExpr},Env) ->
     {RExpr1,_}  = reduce(RExpr,Env),
     % Convert reduced right expr to a static form by generating fresh variables
     % TODO: to avoid name clash (!), use a counter in pen
-    {RExpr_,ConvMatches,_}  = convertToStatic(RExpr1,0),
+    {RExpr_,ConvMatches,_}  = convertToValue(RExpr1,0),
     %%%%%%%%%%%%%%%%%% Bindings business
     % get all freshly generated bindings
     FBindings = lists:foldl(fun(E,AccSet) ->
@@ -125,12 +129,9 @@ reduce({match,L,LExpr,RExpr},Env) ->
     % Unify and put result sub into the env to be returned
     Sub         = unify(LExpr_,RExpr_),
     Env2        = addSubToEnv(Sub,Env1_,L),
-    %%%%%%%%%%%%%%%%%% Scoping business
-    Env_            = Env#pen{bound=sets:union(Env#pen.bound,FBindings)},
-    BindingMatches  = scopeNewVarsIn(Sub,Env_,L),
     %%%%%%%%%%%%%%%%%% Wrap-up
     % combine all matches and return
-    ReturnExprs     = ConvMatches ++ BindingMatches ++ 
+    ReturnExprs     = ConvMatches  ++ 
         case isVar(LExpr_) and isValue(RExpr_) of
             true    -> [RExpr_];
             false   -> [{match,L,LExpr_,RExpr_}]
@@ -426,7 +427,8 @@ mkNode(X,L) when is_integer(X) -> {integer,L,X};
 mkNode(X,L) when is_float(X) -> {float,L,X};
 mkNode(X,L) when is_atom(X) -> {atom,L,X};
 mkNode(X,L) when is_tuple(X) -> 
-    {tuple,L,lists:map(fun(E) ->mkNode(E,L) end,tuple_to_list(X))}.
+    {tuple,L,lists:map(fun(E) ->mkNode(E,L) end,tuple_to_list(X))};
+mkNode([],L) -> {nil,L}.
 
 % eliminate dangling values in a expression (list) body
 elimDeadBody(Body) ->
@@ -435,44 +437,44 @@ elimDeadBody(Body) ->
         lists:droplast(Body)) 
     ++ [lists:last(Body)].
 
-convertToStatic({cons,L,H,T},Counter) ->
-    {H_,HMs,Counter1} = convertToStatic(H,Counter),
-    {T_,TMs,Counter2} = convertToStatic(T,Counter1),
+convertToValue({cons,L,H,T},Counter) ->
+    {H_,HMs,Counter1} = convertToValue(H,Counter),
+    {T_,TMs,Counter2} = convertToValue(T,Counter1),
     {{cons,L,H_,T_}, HMs++ TMs, Counter2};
-convertToStatic({tuple,L,Exprs},Counter) ->
+convertToValue({tuple,L,Exprs},Counter) ->
     {Exprs_,Matches,Counter_} = lists:foldl(fun(E,{AccEs,AccMs,AccCounter}) ->
-        {E_,EMs,AccCounter_} = convertToStatic(E,AccCounter),
+        {E_,EMs,AccCounter_} = convertToValue(E,AccCounter),
         {AccEs ++ [E_], AccMs ++ EMs, AccCounter_}
     end,{[],[],Counter},Exprs),
     {{tuple,L,Exprs_},Matches,Counter_};
-convertToStatic({op,L,Op,LE,RE},Counter) ->
-    {LE_,LMs,Counter1} = convertToStatic(LE,Counter),
-    {RE_,RMs,Counter2} = convertToStatic(RE,Counter1),
+convertToValue({op,L,Op,LE,RE},Counter) ->
+    {LE_,LMs,Counter1} = convertToValue(LE,Counter),
+    {RE_,RMs,Counter2} = convertToValue(RE,Counter1),
     {{op,L,Op,LE_,RE_},LMs ++ RMs,Counter2};
-convertToStatic({call,L,F,Args},Counter) ->
-    FX = {var,L,list_to_atom("X@" ++ util:to_string(Counter))},
-    {F_,FMs,Counter1} = convertToStatic(F,Counter+1),
+convertToValue({call,L,F,Args},Counter) ->
+    {F_,FMs,Counter1} = convertToValue(F,Counter+1),
     {Args_,AMs,Counter2} = lists:foldl(fun(A,{AccAs,AccMs,AccCounter}) ->
-        {A_,AMs,AccCounter_} = convertToStatic(A,AccCounter),
+        {A_,AMs,AccCounter_} = convertToValue(A,AccCounter),
         {AccAs ++ [A_], AccMs ++ AMs, AccCounter_}
     end,{[],[],Counter1},Args),
+    FX = {var,L,list_to_atom("X@" ++ util:to_string(erlang:unique_integer()))},
     FMatch = {match,L,FX,{call,L,F_,Args_}},
-    {FX,[FMatch] ++ FMs ++ AMs,Counter2};
-convertToStatic({block,L,Exprs},Counter) ->
-    FX = {var,L,list_to_atom("X@" ++ util:to_string(Counter))},
+    {FX,FMs ++ AMs ++ [FMatch],Counter2};
+convertToValue({block,L,Exprs},Counter) ->
     {Exprs_,Ms,Counter1} = lists:foldl(fun(A,{AccEs,AccMs,AccCounter}) ->
-        {E_,EMs,AccCounter_} = convertToStatic(A,AccCounter),
+        {E_,EMs,AccCounter_} = convertToValue(A,AccCounter),
         {AccEs ++ [E_], AccMs ++ EMs, AccCounter_}
     end,{[],[],Counter+1},Exprs),
+    FX = {var,L,list_to_atom("X@" ++ util:to_string(erlang:unique_integer()))},
     FMatch = {match,L,FX,blockify(Exprs_,L)},
-    {FX,[FMatch | Ms],Counter1};
-% convertToStatic({match,L,LE,RE},Counter) ->
-%     {LE_,LMs,Counter1} = convertToStatic(LE,Counter),
-%     {RE_,RMs,Counter2} = convertToStatic(RE,Counter1),
+    {FX,Ms ++ [FMatch],Counter1};
+% convertToValue({match,L,LE,RE},Counter) ->
+%     {LE_,LMs,Counter1} = convertToValue(LE,Counter),
+%     {RE_,RMs,Counter2} = convertToValue(RE,Counter1),
 %     {{match,L,LE_,RE_},LMs ++ RMs, Env2};
-convertToStatic({var,L,X},Counter) ->
+convertToValue({var,L,X},Counter) ->
     {{var,L,X},[],Counter};
-convertToStatic(E,Counter) -> 
+convertToValue(E,Counter) -> 
     {E,[],Counter}.
     
 
@@ -497,11 +499,18 @@ unboundVars(Node,Env) ->
 % then, we must create a match expression to avoid unbound var scope
 scopeNewVarsIn(Sub,Env,L) ->
     lists:foldl(fun({X,Expr},AccMatches) ->
-        UnboundVars = unboundVars(Expr,Env),
-        case sets:size(UnboundVars) > 0 of
-            true -> [{match,L,Expr,{var,L,X}}|AccMatches];
-            false -> AccMatches
+        case sets:is_element(X,Env#pen.bound) of
+            false ->
+                AccMatches ++ [{match,L,{var,L,X},Expr}];
+            true -> 
+                UnboundVars = unboundVars(Expr,Env),
+                case sets:size(UnboundVars) > 0 of
+                    true -> AccMatches++ [{match,L,Expr,{var,L,X}}];
+                    false -> AccMatches
+                end
         end
+
+       
     end, [], maps:to_list(Sub)).
 
 blockify(Exprs,L) ->
@@ -510,6 +519,3 @@ blockify(Exprs,L) ->
         [Expr]  -> Expr;
         _       -> {block,L,Exprs}
     end.
-
-freshAtom() ->
-    list_to_atom(util:to_string(make_ref())).
