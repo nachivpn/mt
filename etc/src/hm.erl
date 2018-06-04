@@ -339,7 +339,7 @@ prettify(Env, {tcon, _, N, As}) ->
             io:fwrite("{"),
             E = util:interFoldEffect(
             fun(A,E) -> prettify(E,A) end
-            , fun() -> io:fwrite(" ") end
+            , fun() -> io:fwrite(",") end
             , Env, As),
             io:fwrite("}"),E;
         _       -> 
