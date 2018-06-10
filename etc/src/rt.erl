@@ -58,11 +58,13 @@ defaultEnv() ->
                 hm:funt([hm:tcon("List",[hm:tvar(a,0)],0)],
                         hm:bt(boolean,0),0),0)},
         {{is_boolean,1}, hm:funt([hm:bt(boolean,0)],hm:bt(boolean,0),0)},
+        {{is_pid,1}, hm:funt([hm:bt(pid,0)],hm:bt(boolean,0),0)},
         {'!', hm:forall(a,[{class,"Padd", hm:tvar(a,0)}],hm:forall(b,[],
                 hm:funt([hm:tvar(a,0),hm:tvar(b,0)],hm:tvar(b,0),0),0),0) },
         {{self,0}, hm:funt([],hm:bt(pid,0),0)},
         {{spawn,1}, hm:funt([hm:funt([],hm:tvar(a,0),0)],hm:bt(pid,0),0)},
         {{spawn,2}, hm:funt([hm:bt(atom,0),hm:funt([],hm:tvar(a,0),0)],hm:bt(pid,0),0)},
+        {{spawn_link,1}, hm:funt([hm:funt([],hm:tvar(a,0),0)],hm:bt(pid,0),0)},
         {{spawn_link,2}, hm:funt([hm:bt(atom,0),hm:funt([],hm:tvar(a,0),0)],hm:bt(pid,0),0)},
         {{length,1}, hm:forall(a,[],
                 hm:funt([hm:tcon("List",[hm:tvar(a,0)],0)], hm:bt(integer,0),0),0)},
@@ -74,5 +76,11 @@ defaultEnv() ->
         {{process_flag,2}, hm:funt([hm:bt(atom,0),hm:bt(boolean,0)],hm:bt(boolean,0),0)},
         {{unlink,1}, hm:forall(a,[{class,"Port", hm:tvar(a,0)}],
                 hm:funt([hm:tvar(a,0)],hm:bt(boolean,0),0),0)},
-        {{make_ref,0}, hm:funt([],hm:bt(reference,0),0)}
+        {{link,1}, hm:forall(a,[{class,"Port", hm:tvar(a,0)}],
+                hm:funt([hm:tvar(a,0)],hm:bt(boolean,0),0),0)},
+        {{make_ref,0}, hm:funt([],hm:bt(reference,0),0)},
+        {{exit,2}, hm:forall(a,[{class,"Port", hm:tvar(a,0)}],hm:forall(b,[], 
+                hm:funt([hm:tvar(a,0),hm:tvar(b,0)],hm:bt(boolean,0),0),0),0)},
+        {{register,2}, hm:forall(a,[{class,"Port", hm:tvar(a,0)}],
+                hm:funt([hm:bt(atom,0),hm:tvar(a,0)],hm:bt(boolean,0),0),0)}
     ]).
