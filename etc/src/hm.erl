@@ -1,7 +1,10 @@
 -module(hm).
 -export([solve/1,solvePreds/2]).
 -export([unify/2]).
--export([emptySub/0,comp/2,subE/2,subT/2,subP/2,subPs/2,free/1]).
+-export([emptySub/0,comp/2,subE/2
+    ,subT/2,subP/2
+    ,subPs/2,free/1
+    ,isTVar/1]).
 -export([bt/2,funt/3,tvar/2,tcon/3,forall/4]).
 -export([freshen/1,generalize/3,eqType/2,fresh/1]).
 -export([getLn/1,pretty/1,prettyCs/2,prettify/2,replaceLn/3]).
@@ -121,6 +124,10 @@ eqType({tcon,_,N1,As1},{tcon,_,N2,As2}) ->
 eqType(_,_) -> false.
 
 %%%%%%%%%%%% Utilities
+
+-spec getLn(type()) -> boolean().
+isTVar({tvar, L, _})    -> true;
+isTVar(_)               -> false.
 
 -spec getLn(type()) -> integer().
 getLn ({bt, L, _})          -> L;
