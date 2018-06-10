@@ -125,7 +125,7 @@ eqType(_,_) -> false.
 
 %%%%%%%%%%%% Utilities
 
--spec getLn(type()) -> boolean().
+-spec isTVar(type()) -> boolean().
 isTVar({tvar, L, _})    -> true;
 isTVar(_)               -> false.
 
