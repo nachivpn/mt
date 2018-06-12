@@ -19,9 +19,13 @@ parse_transform(Forms,_) ->
     % get all user define data types (UDTs) 
     UDTs = pp:getUDTs(Forms),
     % add UDTs to default env
-    Env = lists:foldl(fun(UDT,AccEnv) -> 
+    Env0 = lists:foldl(fun(UDT,AccEnv) -> 
         addUDTNode(UDT,AccEnv) 
     end, env:default(), UDTs),
+    % add all user defined records
+    Env = lists:foldl(fun(Rec,AccEnv) -> 
+        addRec(Rec,AccEnv) 
+    end, Env0, pp:getRecs(Forms)),
     % get all functions
     Functions = pp:getFns(Forms),
     % make strongly connected components (SCCs) (sorted in topological ordering)
@@ -73,7 +77,6 @@ typeCheckSCC(Functions,Env) ->
         PolyT   = hm:generalize(T, AccEnv, RemPs),
         env:extend(FunQName, PolyT, AccEnv)
     end, Env, Functions).
-
     
 
 -spec infer(hm:env(), erl_syntax:syntaxTree()) -> 
@@ -83,6 +86,8 @@ infer(_,{integer,L,_}) ->
     {X,[],[{class,"Num",X}]};
 infer(_, {string,L,_}) ->
     {hm:tcon("List", [hm:bt(char,L)],L),[],[]};
+infer(_,{char,L,_}) ->
+    {hm:bt(char,L),[],[]};
 infer(_,{float,L,_}) ->
     {hm:bt(float,L),[],[]}; 
 infer(Env,{clause,L,_,_,_}=Node) ->       
@@ -221,13 +226,70 @@ infer(Env,{lc,L,Expr,Defs}) ->
     {Env_,DefCs,DefPs} = checkLCDefs(Env,Defs),
     {T, ExprCs, ExprPs} = infer(Env_,Expr),
     {hm:tcon("List", [T],L), DefCs ++ ExprCs, DefPs ++ ExprPs};
-infer(Env,{block,L,Exprs}) ->
+infer(Env,{block,_,Exprs}) ->
     {Env_, CsBody, PsBody} = lists:foldl(fun(Expr, {Ei,Csi,Psi}) -> 
         {Ei_,Csi_,Psi_} = checkExpr(Ei,Expr),
         {Ei_, Csi ++ Csi_, Psi ++ Psi_}
     end, {Env,[],[]}, lists:droplast(Exprs)),
     {TLast, CsLast, PsLast} = infer(Env_, lists:last(Exprs)),
     {TLast, CsBody ++ CsLast, PsBody ++ PsLast};
+% Create a record value
+infer(Env,{record,L,Rec,FieldValues}) ->
+    {RConstrType,RecFields,Ps0} = lookupRecord(Rec,Env,L),
+    {funt,_,As,_} = RConstrType,
+    {ArgTs, ArgCs, ArgPs} = lists:foldr(fun({F,ExpectedType},{AccTs,AccCs,AccPs}) ->
+        Field = getField(F),
+        GivenValue = getRecFieldValue(Field,FieldValues),
+        {InfT,InfCs,InfPs} = 
+            case GivenValue of
+                % value not given
+                {nothing}   -> 
+                    case getDefaultValue(F) of
+                        % no default value
+                        {nothing}   -> {hm:bt(undefined,L),[],[]};
+                        % default value is available
+                        {just,DV}    -> infer(Env,DV)
+                    end;
+                % value given, (type is inferred type of given value)
+                {just,V} ->
+                    infer(Env,V)
+            end,
+        {[InfT|AccTs],InfCs ++ unify(InfT,ExpectedType) ++ AccCs, InfPs ++ AccPs}
+    end, {[],[],[]}, lists:zip(RecFields,As)),
+    V = hm:fresh(L),
+    {V, ArgCs ++ unify(RConstrType, hm:funt(ArgTs,V,L)), Ps0 ++ ArgPs};
+% Update a record
+infer(Env,{record,L,Expr,Rec,FieldValues}) ->
+    {ExprT, ExprCs, ExprPs} = infer(Env,Expr),
+    {RConstrType0,RecFields0,Ps0} = lookupRecord(Rec,Env,L),
+    {funt,_,As,B} = RConstrType0,
+    % Construct the types of argments from the types of arguments to constructor
+    {ArgTs, ArgCs, ArgPs} = lists:foldr(fun({F,ExpectedType},{AccTs,AccCs,AccPs}) ->
+        Field = getField(F),
+        GivenValue = getRecFieldValue(Field,FieldValues),
+        {InfT,InfCs,InfPs} = 
+            case GivenValue of
+                % value not given (use type of field in Expr)
+                {nothing}   -> 
+                    {ExpectedType,[],[]};
+                % value given, (type is inferred type of given value)
+                {just,V} ->
+                    infer(Env,V)
+            end,
+        {[InfT|AccTs],InfCs ++ AccCs, InfPs ++ AccPs}
+    end, {[],[],[]}, lists:zip(RecFields0,As)),
+    {RConstrType1,_,Ps1} = lookupRecord(Rec,Env,L),
+    V = hm:fresh(L),
+    { V
+    , ExprCs ++ ArgCs ++ unify(RConstrType1, hm:funt(ArgTs,V,L)) ++ unify(B,ExprT)
+    , ExprPs ++ Ps0 ++ Ps1 ++ ArgPs};
+% Access a record
+infer(Env,{record_field,L,Expr,Rec,{atom,_,Field}}) ->
+    {ExprT, ExprCs, ExprPs} = infer(Env,Expr),
+    {RConstrType0,RecFields0,Ps0} = lookupRecord(Rec,Env,L),
+    {funt,_,As,B} = RConstrType0,
+    T = findFieldType(Field,RecFields0,As),
+    {T,ExprCs ++ unify(B,ExprT),ExprPs ++ Ps0};    
 infer(Env,Node) ->
     case type(Node) of
         Fun when Fun =:= function; Fun =:= fun_expr ->
@@ -254,12 +316,14 @@ infer(Env,Node) ->
 -spec checkExpr(hm:env(), erl_syntax:syntaxTree()) ->
     {hm:env(),[hm:constraint()],[hm:predicate()]}.
 checkExpr(Env,{match,_,LNode,RNode}) ->
-    {Env_, Cons1, Ps} = checkExpr(Env,LNode),
-    {LType, Cons2, PsL} = infer(Env_,LNode),
-    {RType, Cons3, PsR} = infer(Env,RNode),
-    { Env_
-    , Cons1 ++ Cons2 ++ Cons3 ++ unify(LType,RType)
-    , Ps ++ PsL ++ PsR};
+    {Env1, Cons1, Ps1} = checkExpr(Env,LNode),
+    % hack to allow bindings new variables on left in patterns :(
+    {Env2, Cons2, Ps2} = checkExpr(Env1,RNode),
+    {LType, ConsL, PsL} = infer(Env1,LNode),
+    {RType, ConsR, PsR} = infer(Env2,RNode),
+    { Env2
+    , Cons1 ++ Cons2 ++ ConsL ++ ConsR ++ unify(LType,RType)
+    , Ps1 ++ Ps2 ++ PsL ++ PsR};
 checkExpr(Env,{var,L,X}) ->
     case env:is_bound(X,Env) of
         true    -> {Env,[],[]};
@@ -470,6 +534,15 @@ lookupConstrs(X,Env,L) ->
                 end, {[],[]} ,Ts)}
     end.
 
+lookupRecord(X,Env,L) ->
+     case env:lookupRecord(X,Env) of
+        undefined   -> 
+            erlang:error({type_error,"Record " ++ util:to_string(X) ++ 
+                " not bound on line " ++ util:to_string(L)});
+        {RConstrType,RecFields}           -> 
+            {FT,Ps} = hm:freshen(RConstrType),
+            {hm:replaceLn(FT,0,L),RecFields,Ps}
+    end.
 
 -spec addUDTNode(hm:env(),erl_syntax:syntaxTree()) -> hm:env().
 addUDTNode(Node,Env) ->
@@ -516,3 +589,72 @@ addCommonBindings(Clauses,Env,L) ->
     lists:foldl(fun(X,AccEnv) ->
         {AccEnv_,_,_} = checkExpr(AccEnv,{var,L,X}), AccEnv_
     end, Env, CommonBindings).
+
+addRec(Node,Env) ->
+    addRecUDT(element(4,Node),Env,util:getLn(Node)).
+
+addRecUDT({Constr,Fields},Env,L) ->
+    ArgTypes = lists:foldr(fun(F,AccArgs) ->
+        case F of
+            {record_field,LF,_} -> 
+                [hm:fresh(LF)|AccArgs];
+            {record_field,LF,_,DefaultValue} -> 
+                [hm:fresh(LF)|AccArgs];
+            {typed_record_field
+                , {record_field,_,_}
+                , TypeNode} -> 
+                [node2type(TypeNode)|AccArgs];
+            {typed_record_field
+                , {record_field,_,_,_}
+                , TypeNode} ->
+                [node2type(TypeNode)|AccArgs]
+        end
+    end, [], Fields),
+    TVars = lists:filter(fun hm:isTVar/1,ArgTypes),
+    RConstrType = hm:funt(ArgTypes,hm:tcon(Constr,TVars,L),L),
+    PolyRConstrType = hm:generalize(RConstrType,Env,[]),
+    env:extendRecord(Constr,PolyRConstrType,Fields,Env).
+
+getRecFieldValue(_,[]) ->
+    {nothing};
+getRecFieldValue(Field,[{record_field,_,{atom,_,Field},Value}|_]) ->
+    {just,Value};
+getRecFieldValue(Field,[{typed_record_field,{record_field,_,{atom,_,Field}},Value}|_]) ->
+    {just,Value};
+getRecFieldValue(Field,[_|FVs]) ->
+    getRecFieldValue(Field,FVs).
+
+getField({record_field,_,{atom,_,Field}}) -> 
+    Field;
+getField({record_field,_,{atom,_,Field},_}) ->
+    Field;
+getField({typed_record_field, {record_field,_,{atom,_,Field},_}, _}) -> 
+    Field;
+getField({typed_record_field, {record_field,_,{atom,_,Field}}, _}) -> 
+    Field.
+
+findFieldType(FieldName, %field name
+    [{record_field,_,{atom,_,FieldName}}|_] %field definition
+    ,[A|_]) -> %constructor arg type corresponding to field
+    A;
+findFieldType(FieldName, %field name
+    [{record_field,_,{atom,_,FieldName},_}|_] %field definition
+    ,[A|_]) -> %constructor arg type corresponding to field
+    A;
+findFieldType(FieldName,
+    [{typed_record_field,{record_field,_,{atom,_,FieldName}},_}|_]
+    ,[A|_]) ->
+    A;
+findFieldType(FieldName,
+    [{typed_record_field,{record_field,_,{atom,_,FieldName},_},_}|_]
+    ,[A|_]) ->
+    A;
+findFieldType(FieldName,[_|Fs],[_|As]) ->
+    findFieldType(FieldName,Fs,As).
+
+getDefaultValue({record_field,_,{atom,_,_},Value}) ->
+    {just,Value};
+getDefaultValue({typed_record_field,{record_field,_,{atom,_,_},Value},_}) ->
+    {just,Value};
+getDefaultValue(T) ->
+    {nothing}.

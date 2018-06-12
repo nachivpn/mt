@@ -1,6 +1,7 @@
 -module(pp).
 % Pre-processor
--export([eraseAnn/1,getUDTs/1,getFns/1,fmapPEFns/2,getModule/1]).
+-export([eraseAnn/1,getUDTs/1,getFns/1
+        ,fmapPEFns/2,getModule/1,getRecs/1]).
 
 eraseAnn(Forms) ->
     lists:filter(fun(F) ->
@@ -11,9 +12,15 @@ eraseAnn(Forms) ->
     end, Forms).
 
 getUDTs(Forms) ->
+    getAttributes(Forms,'type').
+
+getRecs(Forms) ->
+    getAttributes(Forms,'record').
+
+getAttributes(Forms,Attribute) ->
     lists:filter(fun (Node) -> 
             (erl_syntax:type(Node) == 'attribute') andalso
-            (element(3,Node) == 'type')
+            (element(3,Node) == Attribute)
     end, Forms).
 
 getFns([]) -> 

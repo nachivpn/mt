@@ -3,13 +3,14 @@
         ,is_bound/2,fmapV/2,lookupConstrs/2,default/0
         ,freeInEnv/1,length/1
         ,dumpModuleBindings/2,readModuleBindings/1
-        ,lookupRemote/3]).
+        ,lookupRemote/3,extendRecord/4,lookupRecord/2]).
 -export_type([env/0]).
 
 % Type checker ENvironment
 -record(ten, 
     {   bindings        = [],
-        constructors    = []
+        constructors    = [],
+        recFieldMap     = []
     }).
 
 -type env() :: ten.
@@ -32,6 +33,23 @@ free(X,Env) -> Env#ten{bindings = proplists:delete(X,Env#ten.bindings)}.
 fmapV(F,Env) -> Env#ten{bindings = lists:map(fun ({Var,Type}) -> {Var,F(Type)} end, Env#ten.bindings)}.
 
 lookupConstrs(X,Env) -> proplists:get_all_values(X,Env#ten.constructors).
+
+%%%%%%%%% Records
+
+extendRecord(R,A,RecFieldMap,Env) -> 
+    extendRecFieldMap(R,RecFieldMap,extendConstr(R,A,Env)).
+
+extendRecFieldMap(R,FieldMap,Env) -> 
+    Env#ten{recFieldMap = [{R,FieldMap} | Env#ten.recFieldMap]}.
+
+lookupRecord(X,Env) -> 
+    case lookupConstrs(X,Env) of
+        [A] -> {A,lookupRecFieldMap(X,Env)};
+        []  -> undefined
+    end.
+
+lookupRecFieldMap(X,Env) -> 
+    proplists:get_value(X, Env#ten.recFieldMap).
 
 -spec freeInEnv(hm:env()) -> set:set(hm:tvar()).
 freeInEnv (Env) ->
