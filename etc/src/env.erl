@@ -3,14 +3,16 @@
         ,is_bound/2,fmapV/2,lookupConstrs/2,default/0
         ,freeInEnv/1,length/1
         ,dumpModuleBindings/2,readModuleBindings/1
-        ,lookupRemote/3,extendRecord/4,lookupRecord/2]).
+        ,lookupRemote/3,extendRecord/4,lookupRecord/2
+        ,isPatternInf/1,setPatternInf/1]).
 -export_type([env/0]).
 
 % Type checker ENvironment
 -record(ten, 
     {   bindings        = [],
         constructors    = [],
-        recFieldMap     = []
+        recFieldMap     = [],
+        isPattern       = false
     }).
 
 -type env() :: ten.
@@ -76,3 +78,10 @@ lookupRemote(Module,X,_) ->
         true -> lookup(X,#ten{bindings = readModuleBindings(Module)});
         false -> na
     end.
+
+%%%%%%%%%%%%%%%%%%%
+isPatternInf(Env) -> 
+    Env#ten.isPattern.
+
+setPatternInf(Env) ->
+    Env#ten{isPattern = true}.

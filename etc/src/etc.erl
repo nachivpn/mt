@@ -245,8 +245,12 @@ infer(Env,{record,L,Rec,FieldValues}) ->
                 % value not given
                 {nothing}   -> 
                     case getDefaultValue(F) of
-                        % no default value
-                        {nothing}   -> {hm:bt(undefined,L),[],[]};
+                        % no default value, no given type
+                        {nothing}   -> 
+                            case env:isPatternInf(Env)  of
+                                true    ->  {hm:fresh(L),[],[]};
+                                false   ->   {hm:bt(undefined,L),[],[]}
+                            end;
                         % default value is available
                         {just,DV}    -> infer(Env,DV)
                     end;
@@ -289,7 +293,24 @@ infer(Env,{record_field,L,Expr,Rec,{atom,_,Field}}) ->
     {RConstrType0,RecFields0,Ps0} = lookupRecord(Rec,Env,L),
     {funt,_,As,B} = RConstrType0,
     T = findFieldType(Field,RecFields0,As),
-    {T,ExprCs ++ unify(B,ExprT),ExprPs ++ Ps0};    
+    {T,ExprCs ++ unify(B,ExprT),ExprPs ++ Ps0};  
+infer(Env,{'try',L,TryExprs,[],CatchClauses,AfterExprs}) ->
+    %infer type of try
+    {TrT,TrCs,TrPs} = inferExprs(Env,TryExprs),
+    %infer type of catch
+    {CatchClauseTs, CatchCs, CatchPs} = inferClauses(Env,CatchClauses),
+    CatchBodTs = getTypesOfBodies(CatchClauseTs),
+    case AfterExprs of
+        [] -> 
+            {TrT
+            ,TrCs ++ CatchCs ++ unify([TrT|CatchBodTs])
+            ,TrPs ++ CatchPs};
+        _  -> 
+            {AfterT, AfterCs, AfterPs} = inferExprs(Env,TryExprs),
+            {AfterT
+            , TrCs ++ CatchCs ++ unify([TrT|CatchBodTs]) ++ AfterCs
+            ,TrPs ++ CatchPs ++ AfterPs}
+    end;     
 infer(Env,Node) ->
     case type(Node) of
         Fun when Fun =:= function; Fun =:= fun_expr ->
@@ -312,6 +333,14 @@ infer(Env,Node) ->
         X -> erlang:error({type_error," Cannot infer type of " 
             ++ util:to_string(Node) ++ " with node type "++ util:to_string(X)})
     end.
+
+inferExprs(Env,Exprs) ->
+    {Env_, CsBody, PsBody} = lists:foldl(fun(Expr, {Ei,Csi,Psi}) -> 
+            {Ei_,Csi_,Psi_} = checkExpr(Ei,Expr),
+            {Ei_, Csi ++ Csi_, Psi ++ Psi_}
+        end, {Env,[],[]}, lists:droplast(Exprs)),
+    {TLast, CsLast, PsLast} = infer(Env_, lists:last(Exprs)),
+    {TLast, CsBody ++ CsLast, PsBody ++ PsLast}.
 
 -spec checkExpr(hm:env(), erl_syntax:syntaxTree()) ->
     {hm:env(),[hm:constraint()],[hm:predicate()]}.
@@ -363,10 +392,18 @@ checkExpr(Env,{'receive',L,Clauses}) ->
     { Env_
     , Cs ++ unify(PatTs)
     , Ps};
-checkExpr(Env,ExprNode) -> 
+checkExpr(Env,{record,L,_,FieldExprs}) ->
+    lists:foldl(fun(F, {AccEnv,AccCs,AccPs}) ->
+        Field = getField(F),
+        case getRecFieldValue(Field,FieldExprs) of
+            {just,V} ->
+                {ChEnv,ChCs,ChPs} = checkExpr(AccEnv,V),
+                {ChEnv, AccCs ++ ChCs, AccPs ++ ChPs}
+        end
+    end, {Env,[],[]}, FieldExprs);
+checkExpr(Env,ExprNode) ->
     {_,Cs,Ps} = infer(Env, ExprNode),
     {Env,Cs,Ps}.
-
 
 % infer the types of patterns in arguments of function definition
 -spec inferPatterns(hm:env(),[erl_syntax:syntaxTree()]) -> 
@@ -374,22 +411,9 @@ checkExpr(Env,ExprNode) ->
 inferPatterns(Env,ClausePatterns) ->
     lists:foldl(
         fun(Pattern,{AccTs,AccEnv,AccCs,AccPs}) ->
-            case Pattern of
-                {match,_,LNode,RNode}   -> 
-                    {AccEnv1, LCs, LPs} = checkExpr(AccEnv,LNode),
-                    {AccEnv2, RCs, RPs} = checkExpr(AccEnv1,RNode),
-                    {InfLT, InfLCs, InfLPs} = infer(AccEnv2,LNode),
-                    {InfRT, InfRCs, InfRPs} = infer(AccEnv2,RNode),
-                    { AccTs ++ [InfRT]
-                    , AccEnv2
-                    , AccCs ++ LCs ++ RCs ++ unify(InfLT,InfRT) ++ InfLCs ++ InfRCs
-                    , AccPs ++ LPs ++ RPs ++ InfLPs ++ InfRPs};
-                _                       ->
-                    % checkExpr takes care of extending the env w/ variables in a pattern
-                    {Env_, ChCs, ChPs} = checkExpr(AccEnv,Pattern),
-                    {InfT, InfCs, InfPs} = infer(Env_,Pattern),
-                    {AccTs ++ [InfT], Env_, AccCs ++ ChCs ++ InfCs, AccPs ++ ChPs ++ InfPs }
-            end
+            {Env_, _, _} = checkExpr(AccEnv,Pattern),
+            {InfT, InfCs, InfPs} = infer(env:setPatternInf(Env_),Pattern),
+            {AccTs ++ [InfT], Env_, AccCs ++ InfCs, AccPs ++ InfPs }
         end, {[],Env,[],[]} ,ClausePatterns).
 
 % infer the type of expression on the left of an application
