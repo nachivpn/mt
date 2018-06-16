@@ -22,6 +22,9 @@ cd mt/etc/ && rebar3 escriptize
 
 ```
 
+### Documentation
+
+Currently there's very little documetation on the source code and implementation details. However, the thesis work has been documented closely at multiple stages. If you're curious, check out the reports section: https://github.com/nachivpn/mt/tree/master/reports
 
 ### Disclaimer
 
