@@ -10,10 +10,24 @@
 
 -export([parse_transform/2]).
 
+-export([main/1]).
+
 -type lno() :: integer().
 -type var() :: {var, lno(), atom()}.
 
 -type expr() :: var() | {op,lno(),atom(),expr(),expr()}.
+
+main(Args0) ->
+    Args = ["+{parse_transform, tidy}"] ++ 
+    case lists:member("+noti",Args0) of
+        true -> [];
+        false -> ["+{parse_transform, etc}"]
+    end ++ 
+    case lists:member("+pe",Args0) of
+        true -> ["+{parse_transform, pe}"];
+        false -> []
+    end ++ Args0,
+    erl_compile2:compile_cmdline(Args).
 
 parse_transform(Forms,_) ->
     % get all user define data types (UDTs) 

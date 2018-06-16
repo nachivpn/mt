@@ -1,7 +1,7 @@
-stlc
+etc
 =====
 
-An OTP application
+Erlang Type Checker
 
 Build
 -----
